@@ -15,6 +15,11 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
+ * All contributions to this project are agreed to be licensed under the
+ * GPLv3 or any later version. Contributions are understood to be
+ * any modifications, enhancements, or additions to the project
+ * and become the property of the original author Kris Kersey.
+ *
  * This code is a healthy mix of example code from various libraries with a special
  * thanks to Adafruit for their awesome hardware and software.
  *
