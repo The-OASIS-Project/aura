@@ -36,7 +36,6 @@
 
 // GPS
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h> //http://librarymanager/All#SparkFun_u-blox_GNSS
-#include <MicroNMEA.h> //http://librarymanager/All#MicroNMEA
 
 // IMU
 #include <Adafruit_ICM20948.h>
@@ -51,8 +50,25 @@
 // Data
 #include <ArduinoJson.h>
 
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
+// NeoPixel
+#include <Adafruit_NeoPixel.h>
+
+// WiFi, MQTT, Sockets
+#include <WiFi.h>
+//#define ENABLE_MQTT
+#ifdef ENABLE_MQTT
+#include <ArduinoMqttClient.h>
+#endif
+#define ENABLE_SOCKET
+#ifdef ENABLE_SOCKET
+#define SERVER_PORT 3000
+#define SOCKET_RECONNECT_TIMEOUT_MS 5000
+#endif
+#include "arduino_secrets.h"
+
+// General Purpose
+#define SERIAL_PRINT(x)    if (Serial) { Serial.print(x); }
+#define SERIAL_PRINTLN(x)  if (Serial) { Serial.println(x); }
 
 // I2C pins for ESP32
 #define SDA_PIN 3
@@ -60,8 +76,6 @@
 
 // GPS
 SFE_UBLOX_GNSS myGNSS;
-char nmeaBuffer[100];
-MicroNMEA nmea(nmeaBuffer, sizeof(nmeaBuffer));
 
 // IMU/AHRS
 Adafruit_ICM20948 icm;
@@ -77,6 +91,33 @@ Adafruit_NXPSensorFusion filter; // slowest
 Adafruit_BME680 bme;
 #define SEALEVELPRESSURE_HPA (1018)
 
+// NeoPixel
+// PIN_NEOPIXEL and NEOPIXEL_POWER are defined
+#define NUMPIXELS     1
+Adafruit_NeoPixel pixels(NUMPIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
+
+// WiFi and MQTT
+#define CONN_RETRY_ATTEMPTS  5
+SemaphoreHandle_t clientMutex; // Mutex to protect access to the client
+#ifdef ENABLE_SOCKET
+IPAddress serverIP;
+#endif
+
+///////please enter your sensitive data in the Secret tab/arduino_secrets.h
+char ssid[] = SECRET_SSID;    // your network SSID (name)
+char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
+
+WiFiClient wifiClient;
+#ifdef ENABLE_MQTT
+MqttClient mqttClient(wifiClient);
+
+String brokerString;
+const char *broker = NULL;
+int port = 1883;
+
+const char topic[]  = "helmet";
+#endif
+
 // Task handles
 TaskHandle_t gpsTaskHandle;
 TaskHandle_t imuTaskHandle;
@@ -89,58 +130,71 @@ void enviroTask(void *pvParameters);
 
 // GPS task, pinned to Core 0, runs every 1 second
 void gpsTask(void *pvParameters) {
-  char time[9] = "";
-  char date[11] = "";
-  long altitude = 0L;
-
-  /* Misc. Vars */
+  char time[9] = "00:00:00";
+  char date[11] = "2024/01/01";
+  int32_t altitude_mm = 0;
+  int32_t speed_mmps = 0;
+  float altitude_feet = 0.0f;
+  float speed_mph = 0.0f;
   JsonDocument doc;
+  size_t len = 0;
+  char output_json[256];
 
-  Serial.println(F("GPS task started."));
+  SERIAL_PRINTLN(F("GPS task started."));
 
   while (true) {
-    myGNSS.checkUblox();
-
-    snprintf(time, 9, "%02d:%02d:%02d", nmea.getHour(), nmea.getMinute(), nmea.getSecond());
-    snprintf(date, 11, "20%02d/%02d/%02d", nmea.getYear(), nmea.getMonth(), nmea.getDay());
-
-    nmea.getAltitude(altitude);
-
-#if 0
-    if (nmea.isValid()) {
-      //display.print("Location: ");
-      display.print(nmea.getLatitude()/1000000.0, 6);
-      display.print(", ");
-      display.print(nmea.getLongitude()/1000000.0, 6);
-      //display.print("Speed (knots): "); display.println(GPS.speed);
-      //display.print("Angle: "); display.println(GPS.angle);
-      display.print("Altitude: "); display.println(altitude);
-      display.print("Satellites: "); display.println((int)nmea.getNumSatellites());
+    if (myGNSS.getTimeValid()) {
+      snprintf(time, 9, "%02d:%02d:%02d", myGNSS.getHour(), myGNSS.getMinute(), myGNSS.getSecond());
+    } else {
+      SERIAL_PRINTLN("Time is not valid.");
     }
-#endif
+    if (myGNSS.getDateValid()) {
+      snprintf(date, 11, "%04d/%02d/%02d", myGNSS.getYear(), myGNSS.getMonth(), myGNSS.getDay());
+    } else {
+      SERIAL_PRINTLN("Date is not valid.");
+    }
+
+    altitude_mm = myGNSS.getAltitudeMSL();
+    altitude_feet = static_cast<float>(altitude_mm) / 304.8f;
+
+    speed_mmps = myGNSS.getGroundSpeed();
+    speed_mph = static_cast<float>(speed_mmps) * 0.00223694f;
 
     doc["device"] =     "GPS";
     doc["time"] =       time;
     doc["date"] =       date;
-    doc["fix"] =        (int)nmea.isValid();
-    if (nmea.isValid()) {
-      //doc["quality"] =    GPS.fixquality;
-      //doc["latitude"] =   GPS.latitude;
-      doc["latitudeDegrees"] = nmea.getLatitude()/1000000.0;
-      //doc["lat"] =        lat;
-      //doc["longitude"] =  GPS.longitude;
-      doc["longitudeDegrees"] = nmea.getLongitude()/1000000.0;
-      //doc["lon"] =        lon;
-      doc["speed"] =      nmea.getSpeed();
-      doc["angle"] =      nmea.getCourse();
-      doc["altitude"] =   altitude;
-      doc["satellites"] = nmea.getNumSatellites();
+    doc["fix"] =        (int)myGNSS.getGnssFixOk();
+    if (myGNSS.getGnssFixOk()) {
+      doc["latitudeDegrees"] = round(myGNSS.getLatitude() / 10000000.0 * 1e6) / 1e6;
+      doc["longitudeDegrees"] = round(myGNSS.getLongitude() / 10000000.0 * 1e6) / 1e6;
+      doc["speed"] =      static_cast<int32_t>(speed_mph);
+      doc["angle"] =      static_cast<int32_t>(round(myGNSS.getHeading() / 100000.0));
+      doc["altitude"] =   static_cast<int32_t>(altitude_feet);
+      doc["satellites"] = myGNSS.getSIV();
     }
-    serializeJson(doc, Serial);
-    Serial.println();
-    doc.clear();
+    if (Serial) serializeJson(doc, Serial);
+    SERIAL_PRINTLN();
 
-    nmea.clear();
+    len = serializeJson(doc, output_json, 256);
+
+    // Take the mutex before writing to the client
+    if (xSemaphoreTake(clientMutex, portMAX_DELAY) == pdTRUE) {
+#ifdef ENABLE_MQTT
+      // send message, the Print interface can be used to set the message contents
+      mqttClient.beginMessage(topic);
+      mqttClient.print(output_json);
+      mqttClient.endMessage();
+#endif
+
+#ifdef ENABLE_SOCKET
+      if (wifiClient.connected()) {
+        wifiClient.write(output_json, len);
+      }
+#endif
+      xSemaphoreGive(clientMutex); // Release the mutex after writing
+    }
+
+    doc.clear();
 
     vTaskDelay(pdMS_TO_TICKS(1000)); // Delay for 1 second
   }
@@ -152,8 +206,10 @@ void imuTask(void *pvParameters) {
   float roll, pitch, heading;
   float gx, gy, gz;
   JsonDocument doc;
+  size_t len = 0;
+  char output_json[256];
 
-  Serial.println(F("IMU task started."));
+  SERIAL_PRINTLN(F("IMU task started."));
 
   while (true) {
     /* Read the motion sensors */
@@ -162,40 +218,7 @@ void imuTask(void *pvParameters) {
     magnetometer->getEvent(&mag);
     temperature->getEvent(&temp);
 #if defined(AHRS_DEBUG_OUTPUT)
-    Serial.print("I2C took "); Serial.print(millis()-timestamp); Serial.println(" ms");
-#endif
-
-#if 0
-    Serial.print("\t\tTemperature ");
-    Serial.print(temp.temperature);
-    Serial.println(" deg C");
-
-    /* Display the results (acceleration is measured in m/s^2) */
-    Serial.print("\t\tAccel X: ");
-    Serial.print(accel.acceleration.x);
-    Serial.print(" \tY: ");
-    Serial.print(accel.acceleration.y);
-    Serial.print(" \tZ: ");
-    Serial.print(accel.acceleration.z);
-    Serial.println(" m/s^2 ");
-
-    /* Display the results (rotation is measured in rad/s) */
-    Serial.print("\t\tGyro X: ");
-    Serial.print(gyro.gyro.x);
-    Serial.print(" \tY: ");
-    Serial.print(gyro.gyro.y);
-    Serial.print(" \tZ: ");
-    Serial.print(gyro.gyro.z);
-    Serial.println(" radians/s ");
-    Serial.println();
-
-    Serial.print("\t\tMag X: ");
-    Serial.print(mag.magnetic.x);
-    Serial.print(" \tY: ");
-    Serial.print(mag.magnetic.y);
-    Serial.print(" \tZ: ");
-    Serial.print(mag.magnetic.z);
-    Serial.println(" uT");
+    SERIAL_PRINT("I2C took "); SERIAL_PRINT(millis()-timestamp); SERIAL_PRINTLN(" ms");
 #endif
 
     /* Calculate motion information */
@@ -215,7 +238,7 @@ void imuTask(void *pvParameters) {
                   accel.acceleration.x, accel.acceleration.y, accel.acceleration.z, 
                   mag.magnetic.x, mag.magnetic.y, mag.magnetic.z);
 #if defined(AHRS_DEBUG_OUTPUT)
-    Serial.print("Update took "); Serial.print(millis()-timestamp); Serial.println(" ms");
+    SERIAL_PRINT("Update took "); SERIAL_PRINT(millis()-timestamp); SERIAL_PRINTLN(" ms");
 #endif
 
     // get the heading, pitch and roll
@@ -228,10 +251,26 @@ void imuTask(void *pvParameters) {
     // The following will remap the compass in case it's backwards.
     //doc["heading"] = map(heading, 0, 360, 360, 0);
     doc["heading"] = heading;
-    doc["pitch"] = pitch;
+    doc["pitch"] = -1.0f * pitch;
     doc["roll"] = roll;
-    serializeJson(doc, Serial);
-    Serial.println();
+    if (Serial) serializeJson(doc, Serial);
+    SERIAL_PRINTLN();
+
+    len = serializeJson(doc, output_json, 256);
+
+#ifdef ENABLE_MQTT
+    // send message, the Print interface can be used to set the message contents
+    mqttClient.beginMessage(topic);
+    mqttClient.print(output_json);
+    mqttClient.endMessage();
+#endif
+
+#ifdef ENABLE_SOCKET
+    if (wifiClient.connected()) {
+      wifiClient.write(output_json, len);
+    }
+#endif
+
     doc.clear();
 
     vTaskDelay(pdMS_TO_TICKS(1000 / FILTER_UPDATE_RATE_HZ)); // Delay for 100 ms
@@ -248,8 +287,10 @@ void enviroTask(void *pvParameters) {
   uint32_t timestamp = 0;
   unsigned long bmeEndTime = 0L;
   JsonDocument doc;
+  size_t len = 0;
+  char output_json[256];
 
-  Serial.println(F("Environmental task started."));
+  SERIAL_PRINTLN(F("Environmental task started."));
 
   while (true) {
     timestamp = millis();
@@ -258,14 +299,14 @@ void enviroTask(void *pvParameters) {
     if (bmeEndTime == 0) {
       bmeEndTime = bme.beginReading();
       if (bmeEndTime == 0) {
-        Serial.println(F("Failed to begin reading :("));
+        SERIAL_PRINTLN(F("Failed to begin reading :("));
       } else {
         bmeEndTime += 5000; // I add padding here so we don't block on the reading.
       }
     }
 
     if (bmeEndTime != 0 && timestamp > bmeEndTime) {
-      Serial.println("Reading BME");
+      SERIAL_PRINTLN("Reading BME");
       if (bme.endReading()) {
         temp2 = bme.temperature; // C
         //pressure = bme.pressure / 100.0; // hPa
@@ -280,8 +321,24 @@ void enviroTask(void *pvParameters) {
       doc["device"] = "Enviro";
       doc["temp"] = temp2;
       doc["humidity"] = humidity;
-      serializeJson(doc, Serial);
-      Serial.println();
+      if (Serial) serializeJson(doc, Serial);
+      SERIAL_PRINTLN();
+
+      len = serializeJson(doc, output_json, 256);
+
+  #ifdef ENABLE_MQTT
+      // send message, the Print interface can be used to set the message contents
+      mqttClient.beginMessage(topic);
+      mqttClient.print(output_json);
+      mqttClient.endMessage();
+  #endif
+
+  #ifdef ENABLE_SOCKET
+    if (wifiClient.connected()) {
+      wifiClient.write(output_json, len);
+    }
+  #endif
+
       doc.clear();
     }
 
@@ -289,28 +346,60 @@ void enviroTask(void *pvParameters) {
   }
 }
 
-void setup() {
-  Serial.begin(115200);
-  while (!Serial) { delay(10); }
+#ifdef ENABLE_SOCKET
+bool reconnect() {
+    unsigned long startAttemptTime = millis();
 
-  Serial.println("AURA Initialized. Beginning power on sequence...");
+    while (!wifiClient.connect(serverIP, SERVER_PORT)) {
+        if (millis() - startAttemptTime > SOCKET_RECONNECT_TIMEOUT_MS) {
+            Serial.println("Reconnection timeout reached, giving up.");
+            pixels.setPixelColor(0, pixels.Color(0, 255, 0)); // Set to green on failure
+            pixels.show();
+            return false; // Return false if reconnection fails within the timeout period
+        }
+
+        Serial.println("Connection failed, retrying...");
+        delay(1000); // Wait 1 second before retrying
+    }
+
+    Serial.println("Reconnected to server");
+    pixels.setPixelColor(0, pixels.Color(0, 0, 255)); // Set to blue on success
+    pixels.show();
+    return true; // Return true if reconnection is successful
+}
+#endif
+
+void setup() {
+  unsigned long startTime = millis();
+  int wifiRetries = 0;
+
+  Serial.begin(115200);
+  while (!Serial && (millis() - startTime < 2000)) { // Wait up to 2 seconds for Serial to connect
+    delay(10);
+  }
+
+  SERIAL_PRINTLN("AURA Initialized. Beginning power on sequence...");
+
+  // NeoPixel
+  pixels.begin();
+  pixels.clear();
   
   // Initialize I2C with specified pins and speed
   if (!Wire.begin(SDA_PIN, SCL_PIN, 350000)) {
-    Serial.println("I2C initialization failed!");
+    SERIAL_PRINTLN("I2C initialization failed!");
   } else {
-    Serial.println("I2C initialization success!");
+    SERIAL_PRINTLN("I2C initialization success!");
   }
   
   // IMU
   if (!icm.begin_I2C()) {
-    Serial.println("Failed to find ICM20948 chip");
+    SERIAL_PRINTLN("Failed to find ICM20948 chip");
     while (1) {
       delay(10);
     }
   }
 
-  Serial.println("ICM20948 Found!");
+  SERIAL_PRINTLN("ICM20948 Found!");
   temperature = icm.getTemperatureSensor();
   temperature->printSensorDetails();
 
@@ -328,25 +417,20 @@ void setup() {
   // GPS
   if (myGNSS.begin() == false)
   {
-    Serial.println(F("u-blox GNSS not detected at default I2C address."));
+    SERIAL_PRINTLN(F("u-blox GNSS not detected at default I2C address."));
   } else {
-    Serial.println("GPS found!");
+    SERIAL_PRINTLN("GPS found!");
   }
 
-  myGNSS.setI2COutput(COM_TYPE_UBX | COM_TYPE_NMEA); //Set the I2C port to output both NMEA and UBX messages
-  myGNSS.saveConfigSelective(VAL_CFG_SUBSEC_IOPORT); //Save (only) the communications port settings to flash and BBR
+  myGNSS.setI2COutput(COM_TYPE_UBX); //Set the I2C port to output only UBX messages
 
-  myGNSS.setProcessNMEAMask(SFE_UBLOX_FILTER_NMEA_ALL); // Make sure the library is passing all NMEA messages to processNMEA
-
-  myGNSS.setProcessNMEAMask(SFE_UBLOX_FILTER_NMEA_GGA); // Or, we can be kind to MicroNMEA and _only_ pass the GGA messages to it
-
-  Serial.println("GPS initialized.");
+  SERIAL_PRINTLN("GPS initialized.");
 
   // Enviro
   if (!bme.begin(0x76, true)) {
-    Serial.println("Could not find a valid BME688 sensor, check wiring!");
+    SERIAL_PRINTLN("Could not find a valid BME688 sensor, check wiring!");
   }
-  Serial.println("BME688 found!");
+  SERIAL_PRINTLN("BME688 found!");
 
   // Set up oversampling and filter initialization
   bme.setTemperatureOversampling(BME680_OS_8X);
@@ -354,6 +438,98 @@ void setup() {
   bme.setPressureOversampling(BME680_OS_4X);
   bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
   bme.setGasHeater(320, 150); // 320*C for 150 ms
+
+  pixels.setPixelColor(0, pixels.Color(255, 0, 0));
+  pixels.show();
+
+  // attempt to connect to WiFi network:
+  SERIAL_PRINT("Attempting to connect to WPA SSID: ");
+  SERIAL_PRINTLN(ssid);
+  WiFi.begin(ssid, pass);
+  while ((WiFi.status() != WL_CONNECTED) && (wifiRetries < CONN_RETRY_ATTEMPTS)) {
+    // failed, retry
+    SERIAL_PRINT(".");
+    delay(5000);
+    wifiRetries++;
+  }
+
+  if (wifiRetries == CONN_RETRY_ATTEMPTS) {
+    SERIAL_PRINTLN("Retry timeout.");
+
+    goto start_threads;
+  } else {
+    pixels.setPixelColor(0, pixels.Color(0, 255, 0));
+    pixels.show();
+  }
+  
+  SERIAL_PRINTLN("WiFi connected");
+  SERIAL_PRINTLN("IP address: ");
+  SERIAL_PRINTLN(WiFi.localIP());
+
+  SERIAL_PRINT("GATEWAY: ");
+  SERIAL_PRINTLN(WiFi.gatewayIP());
+
+#ifdef ENABLE_MQTT
+  // You can provide a unique client ID, if not set the library uses Arduino-millis()
+  // Each client must have a unique client ID
+  // mqttClient.setId("clientId");
+
+  // You can provide a username and password for authentication
+  // mqttClient.setUsernamePassword("username", "password");
+
+  brokerString = WiFi.gatewayIP().toString();
+  broker = brokerString.c_str();
+
+  SERIAL_PRINT("Attempting to connect to the MQTT broker: ");
+  SERIAL_PRINTLN(broker);
+
+  if (!mqttClient.connect(broker, port)) {
+    SERIAL_PRINT("MQTT connection failed! Error code = ");
+    SERIAL_PRINTLN(mqttClient.connectError());
+
+    goto start_threads;
+  } else {
+    SERIAL_PRINTLN("You're connected to the MQTT broker!");
+    SERIAL_PRINTLN();
+
+    pixels.setPixelColor(0, pixels.Color(0, 0, 255));
+    pixels.show();
+  }
+
+  mqttClient.setKeepAliveInterval(5);
+  mqttClient.setCleanSession(true);
+  //mqttClient.setMaxPacketSize(512);
+  //mqttClient.setQos(0);
+
+  SERIAL_PRINT("Subscribing to topic: ");
+  SERIAL_PRINTLN(topic);
+  SERIAL_PRINTLN();
+
+  // subscribe to a topic
+  // mqttClient.subscribe(topic);
+
+  // topics can be unsubscribed using:
+  // mqttClient.unsubscribe(topic);
+
+  // Serial.print("Waiting for messages on topic: ");
+  // Serial.println(topic);
+  // Serial.println();
+#endif
+
+#ifdef ENABLE_SOCKET
+  serverIP = WiFi.gatewayIP();
+
+  // Connect to the server
+  reconnect();
+#endif
+
+start_threads:
+  // Create the mutex before starting any tasks
+  clientMutex = xSemaphoreCreateMutex();
+  if (clientMutex == NULL) {
+    Serial.println("Failed to create mutex");
+    while (1); // Halt further execution
+  }
 
   // Create tasks
   if (xTaskCreatePinnedToCore(
@@ -365,7 +541,7 @@ void setup() {
       &gpsTaskHandle,      // Task handle
       0                    // Core 0
   ) != pdPASS) {
-    Serial.println("Failed to create GPS Task");
+    SERIAL_PRINTLN("Failed to create GPS Task");
   }
 
   if (xTaskCreatePinnedToCore(
@@ -377,7 +553,7 @@ void setup() {
       &imuTaskHandle,      // Task handle
       0                    // Core 0
   ) != pdPASS) {
-    Serial.println("Failed to create IMU Task");
+    SERIAL_PRINTLN("Failed to create IMU Task");
   }
 
   if (xTaskCreatePinnedToCore(
@@ -389,21 +565,24 @@ void setup() {
       &enviroTaskHandle,      // Task handle
       1                    // Core 1
   ) != pdPASS) {
-    Serial.println("Failed to create Environmental Task");
+    SERIAL_PRINTLN("Failed to create Environmental Task");
   }
 }
 
 void loop() {
-  // No need for code here; tasks handle everything
+#ifdef ENABLE_SOCKET
+  if (!wifiClient.connected()) {
+    pixels.setPixelColor(0, pixels.Color(0, 255, 0));
+    pixels.show();
+
+    // Attempt to reconnect if the client is disconnected
+    if (!reconnect()) {
+      // Handle failure to reconnect, if necessary
+      Serial.println("Failed to reconnect. Entering an error state.");
+    }
+  }
+#endif
+
+    delay(1000); // Prevent the loop from running too fast
 }
 
-//This function gets called from the SparkFun u-blox Arduino Library
-//As each NMEA character comes in you can specify what to do with it
-//Useful for passing to other libraries like tinyGPS, MicroNMEA, or even
-//a buffer, radio, etc.
-void SFE_UBLOX_GNSS::processNMEA(char incoming)
-{
-  //Take the incoming char from the u-blox I2C port and pass it on to the MicroNMEA lib
-  //for sentence cracking
-  nmea.process(incoming);
-}
