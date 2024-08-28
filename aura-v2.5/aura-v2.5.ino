@@ -55,6 +55,8 @@
 
 // WiFi, MQTT, Sockets
 #include <WiFi.h>
+#include "esp_wifi.h"
+
 //#define ENABLE_MQTT
 #ifdef ENABLE_MQTT
 #include <ArduinoMqttClient.h>
@@ -70,9 +72,13 @@
 #define SERIAL_PRINT(x)    if (Serial) { Serial.print(x); }
 #define SERIAL_PRINTLN(x)  if (Serial) { Serial.println(x); }
 
-// I2C pins for ESP32
-#define SDA_PIN 3
-#define SCL_PIN 4
+// I2C pins for ESP32-S3 Feather
+//#define SDA_PIN 3
+//#define SCL_PIN 4
+
+// I2C pins for QT Py ESP32-S3
+#define SDA_PIN 41
+#define SCL_PIN 40
 
 // GPS
 SFE_UBLOX_GNSS myGNSS;
@@ -97,7 +103,7 @@ Adafruit_BME680 bme;
 Adafruit_NeoPixel pixels(NUMPIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 
 // WiFi and MQTT
-#define CONN_RETRY_ATTEMPTS  5
+#define CONN_RETRY_ATTEMPTS  10
 SemaphoreHandle_t clientMutex; // Mutex to protect access to the client
 #ifdef ENABLE_SOCKET
 IPAddress serverIP;
@@ -279,9 +285,9 @@ void imuTask(void *pvParameters) {
 
 // Environmental sensor task (BME680), pinned to Core 1, runs every 5 seconds
 void enviroTask(void *pvParameters) {
-  float temp2;
+  float temp2 = 0.0;
   //uint32_t pressure;
-  float humidity;
+  float humidity = 0.0;
   //uint32_t gas_resistance;
   //float altitude;
   uint32_t timestamp = 0;
@@ -468,6 +474,9 @@ void setup() {
 
   SERIAL_PRINT("GATEWAY: ");
   SERIAL_PRINTLN(WiFi.gatewayIP());
+
+  // Set maximum WiFi transmission power
+  esp_wifi_set_max_tx_power(84);  // 84 corresponds to 21 dBm, which is the maximum for ESP32-S3
 
 #ifdef ENABLE_MQTT
   // You can provide a unique client ID, if not set the library uses Arduino-millis()
