@@ -36,6 +36,7 @@
 #include "logger.h"
 
 // Component Headers
+#include "espnow_module.h"
 #include "gps_module.h"
 #include "imu_module.h"
 #include "enviro_module.h"
@@ -68,6 +69,7 @@ TaskHandle_t enviroTaskHandle;
 TaskHandle_t displayTaskHandle;
 TaskHandle_t messagingTaskHandle;
 TaskHandle_t servoTaskHandle;
+TaskHandle_t espnowTaskHandle;
 
 void setup() {
   unsigned long startTime = millis();
@@ -119,8 +121,21 @@ void setup() {
   pixels.setPixelColor(0, pixels.Color(255, 0, 0));
   pixels.show();
 
+  // Initialize communication based on selected mode
+#ifdef WIFI_MODE
   // Initialize networking
   setupNetworking(ssid, pass, CONN_RETRY_ATTEMPTS, &wifiClient, &pixels);
+#endif
+
+#ifdef ESPNOW_MODE
+  // Initialize ESP-Now
+  // First set WiFi mode to STA (no connection)
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+
+  // Configure ESP-Now
+  setupESPNow(&pixels);
+#endif
 
   // Create tasks
   if (xTaskCreatePinnedToCore(
@@ -200,11 +215,34 @@ void setup() {
       != pdPASS) {
     LOG_PRINTLN("Failed to create Servo Task");
   }
+
+#ifdef ESPNOW_MODE
+  if (xTaskCreatePinnedToCore(
+        espnowTask,         // Task function
+        "ESP-Now Task",     // Name of the task
+        10000,              // Stack size (in words)
+        NULL,               // Task input parameter
+        1,                  // Priority of the task
+        &espnowTaskHandle,  // Task handle
+        1                   // Core 1
+        )
+      != pdPASS) {
+    LOG_PRINTLN("Failed to create ESP-Now Task");
+  }
+#endif
 }
 
 void loop() {
+  // Network monitoring based on mode
+#ifdef WIFI_MODE
   // Monitor the network connection
   monitorConnection(&wifiClient, &pixels);
+#endif
+
+#ifdef ESPNOW_MODE
+  // Monitor ESP-Now connections
+  monitorESPNowPeers(&pixels);
+#endif
 
   // Check for serial commands
   checkSerialCommands();

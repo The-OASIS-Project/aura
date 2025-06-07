@@ -39,6 +39,7 @@ bool imu_page_first_draw = true;
 bool gps_page_first_draw = true;
 bool enviro_page_first_draw = true;
 bool wifi_page_first_draw = true;
+bool espnow_page_first_draw = true;
 
 // Global variables
 display_data_t display_data;
@@ -71,9 +72,9 @@ Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 #ifdef ESP32_S3_REVERSE_TFT
 void setupPageButtons(void) {
   // Setup page control buttons
-  // D1 and D2 are pulled LOW by default, go HIGH when pressed
-  pinMode(PREV_PAGE_BUTTON_PIN, INPUT);  // No pullup needed - already pulled LOW
-  pinMode(NEXT_PAGE_BUTTON_PIN, INPUT);  // No pullup needed - already pulled LOW
+  // D1 and D2 are pulled HIGH when pressed
+  pinMode(PREV_PAGE_BUTTON_PIN, INPUT_PULLDOWN);
+  pinMode(NEXT_PAGE_BUTTON_PIN, INPUT_PULLDOWN);
 
   // Attach interrupts - trigger on RISING edge for D1/D2 (LOW to HIGH when pressed)
   attachInterrupt(digitalPinToInterrupt(PREV_PAGE_BUTTON_PIN), prevPageButtonHandler, RISING);
@@ -111,7 +112,11 @@ void setupDisplay(void) {
 
   // Initialize the display
   tft.init(TFT_HEIGHT, TFT_WIDTH);  // Note: We're initializing with swapped height and width due to rotation
-  tft.setRotation(3);               // Rotate to landscape
+#ifdef ESP32_S3_REVERSE_TFT
+  tft.setRotation(1);               // Rotate to landscape
+#else
+  tft.setRotation(3);               // Rotate to reverse landscape
+#endif
   tft.fillScreen(COLOR_BG);
 
   // Create mutex for display access
@@ -125,8 +130,10 @@ void setupDisplay(void) {
   strcpy(display_data.air_quality_description, "Unknown");
   strcpy(display_data.time, "00:00:00");
   strcpy(display_data.date, "0000/00/00");
+#ifdef WIFI_MODE
   strcpy(display_data.ssid, ssid);
   strcpy(display_data.ip_address, "0.0.0.0");
+#endif
 
   // Reset page change timer
   last_page_change = millis();
@@ -160,6 +167,7 @@ void resetPageDrawFlags(void) {
   gps_page_first_draw = true;
   enviro_page_first_draw = true;
   wifi_page_first_draw = true;
+  espnow_page_first_draw = true;
 }
 
 // Display IMU page with minimal flicker
@@ -813,6 +821,7 @@ void displayEnviroPage(void) {
   tft.print(PAGE_COUNT);
 }
 
+#ifdef WIFI_MODE
 // Display WiFi status page with minimal flicker
 void displayWiFiPage(void) {
   // Static variables to track previous values
@@ -951,6 +960,93 @@ void displayWiFiPage(void) {
     prev_rssi = display_data.rssi;
   }
 }
+#endif
+
+#ifdef ESPNOW_MODE
+// Display ESP-Now page
+void displayESPNowPage(void) {
+  // Static variables to track previous values
+  static size_t prev_peer_count = 0;
+  static char prev_peers[MAX_DISPLAY_PEERS][32] = {0};
+
+  // On first draw, display the static elements
+  if (espnow_page_first_draw) {
+    // Clear the screen on first draw
+    tft.fillScreen(COLOR_BG);
+
+    // Page title
+    tft.setTextSize(2);
+    tft.setTextColor(ST77XX_BLUE); // Use blue for ESP-Now
+    tft.setCursor(10, 10);
+    tft.print("ESP-Now Status");
+
+    // Draw divider line
+    tft.drawLine(0, 30, TFT_WIDTH, 30, ST77XX_BLUE);
+
+    // Page indicator
+    tft.setCursor(10, TFT_HEIGHT - 15);
+    tft.setTextSize(1);
+    tft.setTextColor(COLOR_TEXT);
+    tft.print("Page ");
+    tft.print(current_page + 1);
+    tft.print("/");
+    tft.print(PAGE_COUNT);
+
+    espnow_page_first_draw = false;
+
+    // Force refresh of all data
+    prev_peer_count = 999;
+    memset(prev_peers, 0, sizeof(prev_peers));
+  }
+
+  // Update peer count if changed
+  if (prev_peer_count != display_data.espnow_peer_count) {
+    tft.fillRect(10, 40, 220, 10, COLOR_BG);
+    tft.setCursor(10, 40);
+    tft.setTextSize(1);
+    tft.setTextColor(COLOR_TEXT);
+    tft.print("Connected Peers: ");
+    tft.setTextColor(COLOR_VALUE);
+    tft.print(display_data.espnow_peer_count);
+
+    prev_peer_count = display_data.espnow_peer_count;
+  }
+
+  // Display the peers
+  bool update_needed = false;
+  for (size_t i = 0; i < MAX_DISPLAY_PEERS; i++) {
+    if (strcmp(prev_peers[i], display_data.espnow_peers[i]) != 0) {
+      update_needed = true;
+      break;
+    }
+  }
+
+  if (update_needed) {
+    // Clear the peer list area
+    tft.fillRect(10, 55, 220, 60, COLOR_BG);
+
+    // Display peer list
+    for (size_t i = 0; i < ((int)display_data.espnow_peer_count < MAX_DISPLAY_PEERS ?
+                            (int)display_data.espnow_peer_count : MAX_DISPLAY_PEERS); i++) {
+      tft.setCursor(20, 55 + i * 12);
+      tft.setTextColor(COLOR_VALUE);
+      tft.print(display_data.espnow_peers[i]);
+
+      // Copy to previous state
+      strncpy(prev_peers[i], display_data.espnow_peers[i], sizeof(prev_peers[i]));
+    }
+
+    // If we have more peers than we can display
+    if (display_data.espnow_peer_count > MAX_DISPLAY_PEERS) {
+      tft.setCursor(20, 55 + MAX_DISPLAY_PEERS * 12);
+      tft.setTextColor(COLOR_TEXT);
+      tft.print("... and ");
+      tft.print(display_data.espnow_peer_count - MAX_DISPLAY_PEERS);
+      tft.print(" more");
+    }
+  }
+}
+#endif
 
 // Main display task - handles page rotation and refresh
 void displayTask(void *pvParameters) {
@@ -1014,9 +1110,16 @@ void displayTask(void *pvParameters) {
           case PAGE_ENVIRO:
             displayEnviroPage();
             break;
+#ifdef WIFI_MODE
           case PAGE_WIFI:
             displayWiFiPage();
             break;
+#endif
+#ifdef ESPNOW_MODE
+          case PAGE_ESPNOW:
+            displayESPNowPage();
+            break;
+#endif
           default:
             // Should never get here
             current_page = PAGE_IMU;

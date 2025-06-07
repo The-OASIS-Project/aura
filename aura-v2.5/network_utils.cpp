@@ -182,6 +182,7 @@ void monitorConnection(WiFiClient* wifiClient, Adafruit_NeoPixel* pixels) {
   updateWiFiDisplayData(wifiClient, pixels);
 }
 
+#ifdef WIFI_MODE
 void updateWiFiDisplayData(WiFiClient* wifiClient, Adafruit_NeoPixel* pixels) {
   if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
     display_data.is_connected = (WiFi.status() == WL_CONNECTED);
@@ -196,6 +197,7 @@ void updateWiFiDisplayData(WiFiClient* wifiClient, Adafruit_NeoPixel* pixels) {
     xSemaphoreGive(displayMutex);
   }
 }
+#endif
 
 // MQTT message callback function - implemented in mqtt_callback.cpp
 #ifdef ENABLE_MQTT
