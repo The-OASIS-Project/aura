@@ -47,7 +47,7 @@ void onESPNowDataRecv(const esp_now_recv_info* info, const uint8_t* data, int le
   const uint8_t* mac = info->src_addr;
   
   if (len < sizeof(espnow_message_t)) {
-    LOG_PRINTLN(F("ESP-Now: Received malformed data (too short)"));
+    //LOG_PRINTLN(F("ESP-Now: Received malformed data (too short)"));
     return;
   }
 

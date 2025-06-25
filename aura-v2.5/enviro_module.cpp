@@ -256,10 +256,7 @@ void enviroTask(void* pvParameters) {
       }
     }
 
-    /* Read ENS160 sensors */
-    LOG_PRINTLN("Reading ENS160");
-
-    // Read air quality data from ENS160
+    /* Read air quality data from ENS160 */
     if (ens160.measure()) {
       // Read Air Quality Index (AQI) - 1 (good) to 5 (poor)
       uint8_t aqi = ens160.getAQI();
