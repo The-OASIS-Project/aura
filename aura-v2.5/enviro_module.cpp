@@ -196,13 +196,13 @@ String getCO2SourceAnalysis(uint16_t co2, uint16_t eco2) {
   int diff = co2 - eco2;
 
   if (diff > 400) {
-    return "Human respiration dominant";
+    return "Human respiration";
   } else if (diff > 200) {
     return "Mainly respiration";
   } else if (abs(diff) <= 200) {
     return "Mixed sources";
   } else if (diff < -200) {
-    return "Chemical sources dominant";
+    return "Chemical sources";
   }
 
   return "Unknown sources";
