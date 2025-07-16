@@ -32,7 +32,13 @@ espnow_peer_t espnow_peers[MAX_ESPNOW_PEERS];
 size_t espnow_peer_count = 0;
 SemaphoreHandle_t espnowMutex = NULL;
 
-// ESP-Now shared key (must match on all devices)
+/*
+ * ESP-Now shared key (must match on all devices)
+ * NOTE: If you're using this code, change this key.
+ *       1) It would be insecure to keep this key since it's public.
+ *       2) If you don't change it and there's someone else using this code,
+ *          your devices will connect to other systems.
+ */
 static const uint8_t PMK[16] = {
   0x54, 0x68, 0x69, 0x73, 0x49, 0x73, 0x41, 0x53, 
   0x68, 0x61, 0x72, 0x65, 0x64, 0x4B, 0x65, 0x79  /* "ThisIsASharedKey" in hex */
@@ -239,8 +245,17 @@ void setupESPNow(Adafruit_NeoPixel* pixels) {
   }
 
   // Register callbacks
-  esp_now_register_recv_cb(onESPNowDataRecv);
-  esp_now_register_send_cb(onESPNowDataSent);
+  if (esp_now_register_recv_cb(onESPNowDataRecv) != ESP_OK) {
+    Serial.println("Failed to register receive callback!");
+  } else {
+    Serial.println("Successfully registered receive callback");
+  }
+
+  if (esp_now_register_send_cb(onESPNowDataSent) != ESP_OK) {
+    Serial.println("Failed to register send callback!");
+  } else {
+    Serial.println("Successfully registered send callback");
+  }
 
   // Add broadcast peer for discovery (cannot be encrypted)
   esp_now_peer_info_t bc;
@@ -358,20 +373,24 @@ bool addPeer(const uint8_t* mac, const char* topic) {
   memset(&peer_info, 0, sizeof(peer_info));
   memcpy(peer_info.peer_addr, mac, 6);
   peer_info.channel = ESPNOW_CHANNEL;
-  peer_info.encrypt = false;
+  peer_info.encrypt = false; // FIXME: Encryption ot working...
 
   esp_err_t result = esp_now_add_peer(&peer_info);
   
-  // If encrypted fails, try unencrypted
+  // If encrypted fails, try unencrypted but log detailed error
   if (result != ESP_OK) {
-    LOG_PRINTLN(F("ESP-Now: Failed to add encrypted peer, trying unencrypted"));
+    LOG_PRINT(F("ESP-Now: Failed to add encrypted peer, error: "));
+    LOG_PRINTLN(esp_err_to_name(result));
+
+    // Only fall back to unencrypted if explicitly configured to do so
+#ifdef ALLOW_UNENCRYPTED_FALLBACK
+    LOG_PRINTLN(F("ESP-Now: Falling back to unencrypted communication (SECURITY RISK)"));
     peer_info.encrypt = false;
     result = esp_now_add_peer(&peer_info);
-  }
-
-  if (result != ESP_OK) {
-    LOG_PRINTLN(F("ESP-Now: Failed to add peer"));
+#else
+    LOG_PRINTLN(F("ESP-Now: Unencrypted fallback disabled, rejecting peer"));
     return false;
+#endif
   }
 
   // Add to our tracking list
