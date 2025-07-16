@@ -51,7 +51,7 @@ static const uint8_t broadcast_addr[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 void onESPNowDataRecv(const esp_now_recv_info* info, const uint8_t* data, int len) {
   // Extract the sender's MAC address from the info structure
   const uint8_t* mac = info->src_addr;
-  
+
   if (len < sizeof(espnow_message_t)) {
     //LOG_PRINTLN(F("ESP-Now: Received malformed data (too short)"));
     return;
@@ -73,32 +73,72 @@ void onESPNowDataRecv(const esp_now_recv_info* info, const uint8_t* data, int le
   switch (msg.type) {
     case ESPNOW_MSG_REGISTRATION:
       {
-        char macStr[18];
-        snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-               mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-        
-        LOG_PRINT(F("ESP-Now: Registration request from: "));
-        LOG_PRINT(msg.topic);
-        LOG_PRINT(F(" ("));
-        LOG_PRINT(macStr);
-        LOG_PRINTLN(F(")"));
+          char macStr[18];
+          snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
-        // Check if topic already exists
-        if (isTopicRegistered(msg.topic)) {
-          LOG_PRINTLN(F("ESP-Now: Topic already registered, sending rejection"));
-          sendESPNowMessage(mac, ESPNOW_MSG_REG_REJECT, msg.topic, NULL, 0);
-        } else {
-          // Add new peer
-          if (addPeer(mac, msg.topic)) {
-            LOG_PRINTLN(F("ESP-Now: Peer added successfully, sending ACK"));
-            sendESPNowMessage(mac, ESPNOW_MSG_REG_ACK, msg.topic, NULL, 0);
-            
-            // Update display data
-            updateESPNowDisplayData();
+          LOG_PRINT(F("ESP-Now: Registration request from: "));
+          LOG_PRINT(msg.topic);
+          LOG_PRINT(F(" ("));
+          LOG_PRINT(macStr);
+          LOG_PRINTLN(F(")"));
+
+          // Check if topic already exists
+          if (isTopicRegistered(msg.topic)) {
+            LOG_PRINTLN(F("ESP-Now: Topic already registered, sending rejection"));
+
+            // Add peer temporarily as unencrypted to send rejection
+            esp_now_peer_info_t temp_peer;
+            memset(&temp_peer, 0, sizeof(temp_peer));
+            memcpy(temp_peer.peer_addr, mac, 6);
+            temp_peer.channel = ESPNOW_CHANNEL;
+            temp_peer.encrypt = false;  // MUST be unencrypted for rejection
+
+            esp_now_del_peer(mac);  // Remove if exists
+            esp_err_t result = esp_now_add_peer(&temp_peer);
+
+            if (result == ESP_OK) {
+                // Send rejection unencrypted
+                sendESPNowMessage(mac, ESPNOW_MSG_REG_REJECT, msg.topic, NULL, 0);
+
+                // Small delay to ensure message is sent
+                delay(10);
+
+                // Remove the temporary peer
+                esp_now_del_peer(mac);
+            } else {
+                LOG_PRINT(F("ESP-Now: Failed to add temp peer for rejection: "));
+                LOG_PRINTLN(esp_err_to_name(result));
+            }
           } else {
-            LOG_PRINTLN(F("ESP-Now: Failed to add peer"));
+            // First, add the peer temporarily as unencrypted to send the ACK
+            esp_now_peer_info_t temp_peer;
+            memset(&temp_peer, 0, sizeof(temp_peer));
+            memcpy(temp_peer.peer_addr, mac, 6);
+            temp_peer.channel = ESPNOW_CHANNEL;
+            temp_peer.encrypt = false;  // Unencrypted for ACK
+
+            esp_now_del_peer(mac);  // Remove if exists
+            esp_now_add_peer(&temp_peer);
+
+            // Send the ACK unencrypted
+            LOG_PRINTLN(F("ESP-Now: Sending unencrypted ACK"));
+            sendESPNowMessage(mac, ESPNOW_MSG_REG_ACK, msg.topic, NULL, 0);
+
+            // Small delay to ensure ACK is sent
+            delay(10);
+
+            // Now remove and re-add as encrypted for future communication
+            esp_now_del_peer(mac);
+
+            // Add peer properly with encryption
+            if (addPeer(mac, msg.topic)) {
+                LOG_PRINTLN(F("ESP-Now: Peer added with encryption"));
+                updateESPNowDisplayData();
+            } else {
+                LOG_PRINTLN(F("ESP-Now: Failed to add peer"));
+            }
           }
-        }
       }
       break;
 
@@ -119,7 +159,7 @@ void onESPNowDataRecv(const esp_now_recv_info* info, const uint8_t* data, int le
             uint8_t json_data[201];
             memcpy(json_data, msg.data, msg.data_len);
             json_data[msg.data_len] = '\0';
-            
+
             //LOG_PRINT(F("ESP-Now: Data from "));
             //LOG_PRINT(espnow_peers[peer_idx].topic);
             //LOG_PRINT(F(": "));
@@ -196,7 +236,7 @@ void setupESPNow(Adafruit_NeoPixel* pixels) {
   uint8_t macAddr[6];
   int attempts = 0;
   bool validMac = false;
-  
+
   while (!validMac && attempts < 5) {
     WiFi.macAddress(macAddr);
     // Check if MAC is all zeros
@@ -207,20 +247,20 @@ void setupESPNow(Adafruit_NeoPixel* pixels) {
         break;
       }
     }
-    
+
     if (!validMac) {
       LOG_PRINTLN(F("Invalid MAC detected, waiting for WiFi initialization..."));
       delay(500);
       attempts++;
     }
   }
-  
+
   char macStr[18];
   snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
            macAddr[0], macAddr[1], macAddr[2], macAddr[3], macAddr[4], macAddr[5]);
   LOG_PRINT(F("AURA MAC Address: "));
   LOG_PRINTLN(macStr);
-  
+
   if (!validMac) {
     LOG_PRINTLN(F("WARNING: Could not get valid MAC address!"));
     pixels->setPixelColor(0, pixels->Color(255, 0, 0)); // Red for failure
@@ -234,7 +274,7 @@ void setupESPNow(Adafruit_NeoPixel* pixels) {
     pixels->show();
     return;
   }
-  
+
   delay(100); // Short delay after initialization
 
   // Set Primary Master Key (PMK) for encryption
@@ -285,12 +325,12 @@ void setupESPNow(Adafruit_NeoPixel* pixels) {
 void monitorESPNowPeers(Adafruit_NeoPixel* pixels) {
   static unsigned long last_cleanup = 0;
   unsigned long now = millis();
-  
+
   // Clean inactive peers every 10 seconds
   if (now - last_cleanup > 10000) {
     last_cleanup = now;
     cleanInactivePeers();
-    
+
     // Update LED based on peer count
     if (espnow_peer_count > 0) {
       pixels->setPixelColor(0, pixels->Color(0, 255, 0)); // Green when peers connected
@@ -349,7 +389,7 @@ bool addPeer(const uint8_t* mac, const char* topic) {
   int8_t existing_idx = findPeerByMac(mac);
   if (existing_idx >= 0) {
     LOG_PRINTLN(F("ESP-Now: Peer with this MAC already exists, updating topic"));
-    
+
     if (xSemaphoreTake(espnowMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
       strncpy(espnow_peers[existing_idx].topic, topic, sizeof(espnow_peers[existing_idx].topic));
       espnow_peers[existing_idx].last_seen = millis();
@@ -373,24 +413,15 @@ bool addPeer(const uint8_t* mac, const char* topic) {
   memset(&peer_info, 0, sizeof(peer_info));
   memcpy(peer_info.peer_addr, mac, 6);
   peer_info.channel = ESPNOW_CHANNEL;
-  peer_info.encrypt = false; // FIXME: Encryption ot working...
+  peer_info.encrypt = true;
+  memcpy(peer_info.lmk, PMK, 16);
 
   esp_err_t result = esp_now_add_peer(&peer_info);
-  
-  // If encrypted fails, try unencrypted but log detailed error
   if (result != ESP_OK) {
     LOG_PRINT(F("ESP-Now: Failed to add encrypted peer, error: "));
     LOG_PRINTLN(esp_err_to_name(result));
 
-    // Only fall back to unencrypted if explicitly configured to do so
-#ifdef ALLOW_UNENCRYPTED_FALLBACK
-    LOG_PRINTLN(F("ESP-Now: Falling back to unencrypted communication (SECURITY RISK)"));
-    peer_info.encrypt = false;
-    result = esp_now_add_peer(&peer_info);
-#else
-    LOG_PRINTLN(F("ESP-Now: Unencrypted fallback disabled, rejecting peer"));
     return false;
-#endif
   }
 
   // Add to our tracking list
@@ -426,7 +457,7 @@ void removePeer(int8_t idx) {
   if (xSemaphoreTake(espnowMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
     // Remove from ESP-Now
     esp_now_del_peer(espnow_peers[idx].mac);
-    
+
     LOG_PRINT(F("ESP-Now: Removed peer: "));
     LOG_PRINT(espnow_peers[idx].topic);
     LOG_PRINT(F(" ("));
@@ -451,13 +482,13 @@ void removePeer(int8_t idx) {
 // Clean inactive peers (not seen for 30 seconds)
 void cleanInactivePeers() {
   uint32_t now = millis();
-  
+
   if (xSemaphoreTake(espnowMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
     for (int8_t i = 0; i < espnow_peer_count; i++) {
       if (now - espnow_peers[i].last_seen > 30000) { // 30 seconds timeout
         // Mark the peer for removal
         esp_now_del_peer(espnow_peers[i].mac);
-        
+
         LOG_PRINT(F("ESP-Now: Timeout for peer: "));
         LOG_PRINT(espnow_peers[i].topic);
         LOG_PRINT(F(" ("));
@@ -486,18 +517,18 @@ void cleanInactivePeers() {
 void sendESPNowMessage(const uint8_t* mac, uint8_t type, const char* topic, const uint8_t* data, size_t len) {
   espnow_message_t msg;
   memset(&msg, 0, sizeof(msg));
-  
+
   // Set message fields
   msg.type = type;
   msg.sequence = 0; // Only used for data messages
   strncpy(msg.topic, topic, sizeof(msg.topic));
   msg.timestamp = millis();
-  
+
   // Get our own MAC
   uint8_t self_mac[6];
   WiFi.macAddress(self_mac);
   memcpy(msg.mac, self_mac, 6);
-  
+
   // Copy data if provided
   if (data != NULL && len > 0) {
     if (len > sizeof(msg.data)) {
@@ -508,20 +539,15 @@ void sendESPNowMessage(const uint8_t* mac, uint8_t type, const char* topic, cons
   } else {
     msg.data_len = 0;
   }
-  
+
   // Log more details about the message being sent
   char macStr[18];
   snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
          mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  
-  //LOG_PRINT(F("ESP-Now: Sending message type "));
-  //LOG_PRINT(String(type));
-  //LOG_PRINT(F(" to "));
-  //LOG_PRINTLN(macStr);
-  
+
   // Only send once
   esp_err_t result = esp_now_send(mac, (uint8_t*)&msg, sizeof(msg));
-  
+
   if (result != ESP_OK) {
     LOG_PRINT(F("ESP-Now: Failed to send message, error code: "));
     LOG_PRINTLN(String(result));
@@ -540,25 +566,25 @@ bool processESPNowJson(const char* jsonString, size_t length, const uint8_t* sen
   // Parse the JSON
   JsonDocument doc;
   DeserializationError error = deserializeJson(doc, jsonString, length);
-  
+
   if (error) {
     LOG_PRINT(F("ESP-Now: JSON parsing failed: "));
     LOG_PRINTLN(error.c_str());
     return false;
   }
-  
+
   // Forward to the common command processor if it's a command
   if (doc.containsKey("action")) {
     return processCommandJson(jsonString, length);
   }
-  
+
   // Otherwise, pass through to logger for normal processing
   if (doc.containsKey("device")) {
     // Process as a regular sensor data message
     logger_send_json(&doc, doc["device"]);
     return true;
   }
-  
+
   return false;
 }
 
@@ -567,13 +593,13 @@ void updateESPNowDisplayData() {
   if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
     // Update ESP-Now peer count in display data
     display_data.espnow_peer_count = espnow_peer_count;
-    
+
     // Copy up to MAX_DISPLAY_PEERS topics to display data
     int peers_to_copy = (int)espnow_peer_count < MAX_DISPLAY_PEERS ? (int)espnow_peer_count : MAX_DISPLAY_PEERS;
     for (int i = 0; i < peers_to_copy; i++) {
       strncpy(display_data.espnow_peers[i], espnow_peers[i].topic, sizeof(display_data.espnow_peers[i]));
     }
-    
+
     xSemaphoreGive(displayMutex);
   }
 }
@@ -581,18 +607,18 @@ void updateESPNowDisplayData() {
 // ESP-Now task function
 void espnowTask(void* pvParameters) {
   LOG_PRINTLN(F("ESP-Now task started"));
-  
+
   uint32_t last_cleanup = 0;
-  
+
   while (true) {
     uint32_t now = millis();
-    
+
     // Clean inactive peers every 5 seconds
     if (now - last_cleanup > 5000) {
       last_cleanup = now;
       cleanInactivePeers();
     }
-    
+
     // Short delay to prevent CPU hogging
     vTaskDelay(pdMS_TO_TICKS(100));
   }
