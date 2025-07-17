@@ -22,10 +22,11 @@
  * part of the project and are adopted by the project author(s).
  */
 
+#include "arduino_secrets.h"
+#include "command_processor.h"
+#include "display_module.h"
 #include "espnow_module.h"
 #include "logger.h"
-#include "display_module.h"
-#include "command_processor.h"
 
 // Global variables
 espnow_peer_t espnow_peers[MAX_ESPNOW_PEERS];
@@ -38,6 +39,8 @@ SemaphoreHandle_t espnowMutex = NULL;
  *       1) It would be insecure to keep this key since it's public.
  *       2) If you don't change it and there's someone else using this code,
  *          your devices will connect to other systems.
+ *
+ * SECRET_PMK is located in the arduino_secrets.h.
  */
 static const uint8_t PMK[16] = {
   0x54, 0x68, 0x69, 0x73, 0x49, 0x73, 0x41, 0x53, 

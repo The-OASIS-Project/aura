@@ -24,3 +24,18 @@
 
 #define SECRET_SSID "STARKINDUSTRIES"
 #define SECRET_PASS "IronMan123"
+
+/*
+ * SECURITY WARNING: Change the PMK to your own unique value!
+ * Using the default key makes your ESP-Now communication vulnerable.
+ * Generate a random 16-byte key for production use.
+ *
+ * This has to match the key in the SPARK code!
+ *
+ * Example command to generate a random key:
+ * openssl rand -hex 16
+ */
+#define SECRET_PMK { \
+  0x54, 0x68, 0x69, 0x73, 0x49, 0x73, 0x41, 0x53, \
+  0x68, 0x61, 0x72, 0x65, 0x64, 0x4B, 0x65, 0x79  \
+}
