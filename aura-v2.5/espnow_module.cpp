@@ -42,10 +42,7 @@ SemaphoreHandle_t espnowMutex = NULL;
  *
  * SECRET_PMK is located in the arduino_secrets.h.
  */
-static const uint8_t PMK[16] = {
-  0x54, 0x68, 0x69, 0x73, 0x49, 0x73, 0x41, 0x53, 
-  0x68, 0x61, 0x72, 0x65, 0x64, 0x4B, 0x65, 0x79  /* "ThisIsASharedKey" in hex */
-};
+static const uint8_t PMK[16] = SECRET_PMK;
 
 // ESP-Now broadcast address
 static const uint8_t broadcast_addr[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
