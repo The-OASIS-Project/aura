@@ -56,9 +56,6 @@
 // ESP-Now channel (1-14)
 #define ESPNOW_CHANNEL 1
 
-// Maximum number of ESP-Now peers to display
-#define MAX_DISPLAY_PEERS 5
-
 // =========== GPS CONFIGURATION ===========
 
 // Choose ONE GPS interface method

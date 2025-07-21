@@ -34,6 +34,10 @@
 #include <WiFi.h>
 #include "config.h"
 
+// Maximum number of ESP-Now peers to display
+// If this is changed, other display elements must change too.
+#define MAX_DISPLAY_PEERS 4
+
 // Enum for display pages
 typedef enum {
   PAGE_IMU = 0,
@@ -115,6 +119,8 @@ typedef struct {
   // ESP-Now data
   size_t espnow_peer_count;
   char espnow_peers[MAX_DISPLAY_PEERS][32];  // Array of peer topics
+  uint32_t espnow_packets_received[MAX_DISPLAY_PEERS]; // Packets received
+  uint32_t espnow_packets_missed[MAX_DISPLAY_PEERS];   // Packets missed
 #endif
 } display_data_t;
 

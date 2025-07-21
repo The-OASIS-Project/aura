@@ -149,6 +149,22 @@ void onESPNowDataRecv(const esp_now_recv_info* info, const uint8_t* data, int le
           // Update last seen time
           if (xSemaphoreTake(espnowMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             espnow_peers[peer_idx].last_seen = now;
+
+            // Increment received packet counter
+            espnow_peers[peer_idx].packets_received++;
+
+            // Check for missed packets by comparing sequence numbers
+            uint8_t expected_seq = (espnow_peers[peer_idx].last_seq_received + 1) & 0xFF;
+            if (msg.sequence != expected_seq && espnow_peers[peer_idx].last_seq_received != 0) {
+              // Calculate missed packets (accounting for rollover)
+              uint8_t missed = (msg.sequence - expected_seq) & 0xFF;
+              espnow_peers[peer_idx].packets_missed += missed;
+              LOG_PRINT(F("ESP-Now: Missed "));
+              LOG_PRINT(String(missed));
+              LOG_PRINT(F(" packets from "));
+              LOG_PRINTLN(espnow_peers[peer_idx].topic);
+            }
+
             espnow_peers[peer_idx].last_seq_received = msg.sequence;
             xSemaphoreGive(espnowMutex);
           }
@@ -391,9 +407,14 @@ bool addPeer(const uint8_t* mac, const char* topic) {
     LOG_PRINTLN(F("ESP-Now: Peer with this MAC already exists, updating topic"));
 
     if (xSemaphoreTake(espnowMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-      strncpy(espnow_peers[existing_idx].topic, topic, sizeof(espnow_peers[existing_idx].topic));
-      espnow_peers[existing_idx].last_seen = millis();
-      espnow_peers[existing_idx].active = true;
+      memcpy(espnow_peers[espnow_peer_count].mac, mac, 6);
+      strncpy(espnow_peers[espnow_peer_count].topic, topic, sizeof(espnow_peers[espnow_peer_count].topic));
+      espnow_peers[espnow_peer_count].last_seen = millis();
+      espnow_peers[espnow_peer_count].last_seq_received = 0;
+      espnow_peers[espnow_peer_count].packets_received = 0;
+      espnow_peers[espnow_peer_count].packets_missed = 0;
+      espnow_peers[espnow_peer_count].active = true;
+      espnow_peer_count++;
       xSemaphoreGive(espnowMutex);
     }
     return true;
@@ -598,6 +619,8 @@ void updateESPNowDisplayData() {
     int peers_to_copy = (int)espnow_peer_count < MAX_DISPLAY_PEERS ? (int)espnow_peer_count : MAX_DISPLAY_PEERS;
     for (int i = 0; i < peers_to_copy; i++) {
       strncpy(display_data.espnow_peers[i], espnow_peers[i].topic, sizeof(display_data.espnow_peers[i]));
+      display_data.espnow_packets_received[i] = espnow_peers[i].packets_received;
+      display_data.espnow_packets_missed[i] = espnow_peers[i].packets_missed;
     }
 
     xSemaphoreGive(displayMutex);

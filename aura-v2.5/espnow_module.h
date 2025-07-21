@@ -65,6 +65,8 @@ typedef struct {
   char topic[32];                    // Peer topic/identifier
   uint32_t last_seen;                // Last seen timestamp
   uint8_t last_seq_received;         // Last sequence number received
+  uint32_t packets_received;         // Total packets received
+  uint32_t packets_missed;           // Packets missed (sequence gaps)
   bool active;                       // Whether peer is active
 } espnow_peer_t;
 

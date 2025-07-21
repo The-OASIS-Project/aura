@@ -968,6 +968,8 @@ void displayESPNowPage(void) {
   // Static variables to track previous values
   static size_t prev_peer_count = 0;
   static char prev_peers[MAX_DISPLAY_PEERS][32] = {0};
+  static uint32_t prev_packets_received[MAX_DISPLAY_PEERS] = {0};
+  static uint32_t prev_packets_missed[MAX_DISPLAY_PEERS] = {0};
 
   // On first draw, display the static elements
   if (espnow_page_first_draw) {
@@ -997,6 +999,8 @@ void displayESPNowPage(void) {
     // Force refresh of all data
     prev_peer_count = 999;
     memset(prev_peers, 0, sizeof(prev_peers));
+    memset(prev_packets_received, 0, sizeof(prev_packets_received));
+    memset(prev_packets_missed, 0, sizeof(prev_packets_missed));
   }
 
   // Update peer count if changed
@@ -1012,10 +1016,12 @@ void displayESPNowPage(void) {
     prev_peer_count = display_data.espnow_peer_count;
   }
 
-  // Display the peers
+  // Check if any data has changed
   bool update_needed = false;
   for (size_t i = 0; i < MAX_DISPLAY_PEERS; i++) {
-    if (strcmp(prev_peers[i], display_data.espnow_peers[i]) != 0) {
+    if (strcmp(prev_peers[i], display_data.espnow_peers[i]) != 0 ||
+        prev_packets_received[i] != display_data.espnow_packets_received[i] ||
+        prev_packets_missed[i] != display_data.espnow_packets_missed[i]) {
       update_needed = true;
       break;
     }
@@ -1025,20 +1031,49 @@ void displayESPNowPage(void) {
     // Clear the peer list area
     tft.fillRect(10, 55, 220, 60, COLOR_BG);
 
-    // Display peer list
-    for (size_t i = 0; i < ((int)display_data.espnow_peer_count < MAX_DISPLAY_PEERS ?
-                            (int)display_data.espnow_peer_count : MAX_DISPLAY_PEERS); i++) {
-      tft.setCursor(20, 55 + i * 12);
+    // Column headers
+    tft.setCursor(10, 55);
+    tft.setTextColor(COLOR_TEXT);
+    tft.print("Device");
+
+    tft.setCursor(130, 55);
+    tft.print("Rcv");
+
+    tft.setCursor(170, 55);
+    tft.print("Missed");
+
+    tft.drawLine(10, 65, 230, 65, COLOR_TEXT);
+
+    // Display peer list with statistics
+    int visiblePeers = min((int)display_data.espnow_peer_count, MAX_DISPLAY_PEERS);
+    for (size_t i = 0; i < visiblePeers; i++) {
+      // Topic name
+      tft.setCursor(10, 70 + i * 12);
       tft.setTextColor(COLOR_VALUE);
       tft.print(display_data.espnow_peers[i]);
 
+      // Packets received
+      tft.setCursor(130, 70 + i * 12);
+      tft.print(display_data.espnow_packets_received[i]);
+
+      // Packets missed
+      tft.setCursor(170, 70 + i * 12);
+      if (display_data.espnow_packets_missed[i] > 0) {
+        tft.setTextColor(COLOR_ALERT); // Red for missed packets
+      } else {
+        tft.setTextColor(COLOR_GOOD);  // Green for no missed packets
+      }
+      tft.print(display_data.espnow_packets_missed[i]);
+
       // Copy to previous state
       strncpy(prev_peers[i], display_data.espnow_peers[i], sizeof(prev_peers[i]));
+      prev_packets_received[i] = display_data.espnow_packets_received[i];
+      prev_packets_missed[i] = display_data.espnow_packets_missed[i];
     }
 
     // If we have more peers than we can display
     if (display_data.espnow_peer_count > MAX_DISPLAY_PEERS) {
-      tft.setCursor(20, 55 + MAX_DISPLAY_PEERS * 12);
+      tft.setCursor(10, 118);
       tft.setTextColor(COLOR_TEXT);
       tft.print("... and ");
       tft.print(display_data.espnow_peer_count - MAX_DISPLAY_PEERS);
