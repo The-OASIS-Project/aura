@@ -48,6 +48,12 @@
 #define ESPNOW_MSG_PING            6  // Ping to check connectivity
 #define ESPNOW_MSG_PONG            7  // Pong response
 
+// NOTE: The system uses regular data messages as implicit heartbeats.
+// SPARK devices are expected to send updates every 5 seconds (see sendInterval in spark-generic-v1.ino)
+// This eliminates the need for explicit ping/pong heartbeat messages.
+// The 30-second timeout is designed to allow for occasional packet loss while still
+// detecting actual disconnections.
+
 // ESP-Now message structure
 typedef struct {
   uint8_t type;                      // Message type
@@ -81,6 +87,7 @@ void setupESPNow(Adafruit_NeoPixel* pixels);
 void monitorESPNowPeers(Adafruit_NeoPixel* pixels);
 void espnowTask(void* pvParameters);
 bool isTopicRegistered(const char* topic);
+bool wasTopicUsedByDifferentMac(const char* topic, const uint8_t* mac);
 int8_t findPeerByTopic(const char* topic);
 int8_t findPeerByMac(const uint8_t* mac);
 bool addPeer(const uint8_t* mac, const char* topic);

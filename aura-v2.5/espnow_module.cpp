@@ -84,7 +84,7 @@ void onESPNowDataRecv(const esp_now_recv_info* info, const uint8_t* data, int le
           LOG_PRINTLN(F(")"));
 
           // Check if topic already exists
-          if (isTopicRegistered(msg.topic)) {
+          if (isTopicRegistered(msg.topic) && wasTopicUsedByDifferentMac(msg.topic, mac)) {
             LOG_PRINTLN(F("ESP-Now: Topic already registered, sending rejection"));
 
             // Add peer temporarily as unencrypted to send rejection
@@ -369,6 +369,22 @@ bool isTopicRegistered(const char* topic) {
     xSemaphoreGive(espnowMutex);
   }
   return false;
+}
+
+// Check if topic was used by a different MAC address (for handling race conditions)
+bool wasTopicUsedByDifferentMac(const char* topic, const uint8_t* mac) {
+   if (xSemaphoreTake(espnowMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+      for (size_t i = 0; i < espnow_peer_count; i++) {
+         // If we find the topic but with a different MAC
+         if (strcmp(espnow_peers[i].topic, topic) == 0 &&
+             memcmp(espnow_peers[i].mac, mac, 6) != 0) {
+            xSemaphoreGive(espnowMutex);
+            return true;
+         }
+      }
+      xSemaphoreGive(espnowMutex);
+   }
+   return false;
 }
 
 // Find peer index by topic
