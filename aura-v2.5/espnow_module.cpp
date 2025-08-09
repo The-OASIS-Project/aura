@@ -302,15 +302,15 @@ void setupESPNow(Adafruit_NeoPixel* pixels) {
 
   // Register callbacks
   if (esp_now_register_recv_cb(onESPNowDataRecv) != ESP_OK) {
-    Serial.println("Failed to register receive callback!");
+    LOG_PRINTLN(F(("Failed to register receive callback!"));
   } else {
-    Serial.println("Successfully registered receive callback");
+    LOG_PRINTLN(F("Successfully registered receive callback"));
   }
 
   if (esp_now_register_send_cb(onESPNowDataSent) != ESP_OK) {
-    Serial.println("Failed to register send callback!");
+    LOG_PRINTLN(F(("Failed to register send callback!"));
   } else {
-    Serial.println("Successfully registered send callback");
+    LOG_PRINTLN(F(("Successfully registered send callback"));
   }
 
   // Add broadcast peer for discovery (cannot be encrypted)
@@ -423,14 +423,11 @@ bool addPeer(const uint8_t* mac, const char* topic) {
     LOG_PRINTLN(F("ESP-Now: Peer with this MAC already exists, updating topic"));
 
     if (xSemaphoreTake(espnowMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-      memcpy(espnow_peers[espnow_peer_count].mac, mac, 6);
-      strncpy(espnow_peers[espnow_peer_count].topic, topic, sizeof(espnow_peers[espnow_peer_count].topic));
-      espnow_peers[espnow_peer_count].last_seen = millis();
-      espnow_peers[espnow_peer_count].last_seq_received = 0;
-      espnow_peers[espnow_peer_count].packets_received = 0;
-      espnow_peers[espnow_peer_count].packets_missed = 0;
-      espnow_peers[espnow_peer_count].active = true;
-      espnow_peer_count++;
+      espnow_peers[existing_idx].last_seen = millis();
+      espnow_peers[existing_idx].last_seq_received = 0;
+      espnow_peers[existing_idx].packets_received = 0;
+      espnow_peers[existing_idx].packets_missed = 0;
+      espnow_peers[existing_idx].active = true;
       xSemaphoreGive(espnowMutex);
     }
     return true;
@@ -441,9 +438,6 @@ bool addPeer(const uint8_t* mac, const char* topic) {
     LOG_PRINTLN(F("ESP-Now: Maximum number of peers reached"));
     return false;
   }
-
-  // First try to delete the peer in case it's already added
-  esp_now_del_peer(mac);
 
   // Add peer to ESP-Now with encryption
   esp_now_peer_info_t peer_info;
