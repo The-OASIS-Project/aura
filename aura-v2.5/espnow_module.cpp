@@ -302,15 +302,15 @@ void setupESPNow(Adafruit_NeoPixel* pixels) {
 
   // Register callbacks
   if (esp_now_register_recv_cb(onESPNowDataRecv) != ESP_OK) {
-    LOG_PRINTLN(F(("Failed to register receive callback!"));
+    LOG_PRINTLN(F("Failed to register receive callback!"));
   } else {
     LOG_PRINTLN(F("Successfully registered receive callback"));
   }
 
   if (esp_now_register_send_cb(onESPNowDataSent) != ESP_OK) {
-    LOG_PRINTLN(F(("Failed to register send callback!"));
+    LOG_PRINTLN(F("Failed to register send callback!"));
   } else {
-    LOG_PRINTLN(F(("Successfully registered send callback"));
+    LOG_PRINTLN(F("Successfully registered send callback"));
   }
 
   // Add broadcast peer for discovery (cannot be encrypted)
