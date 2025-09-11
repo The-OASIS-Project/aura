@@ -30,11 +30,15 @@
 #include "config.h"
 
 #ifdef ENABLE_MQTT
+#define MAX_MESSAGE_SIZE  4096
+
+static char message[MAX_MESSAGE_SIZE] = "";
 
 // MQTT message callback function
 void onMqttMessageReceived(int messageSize) {
+  int i = 0;
   // Only process if the message isn't too large
-  if (messageSize > 512) {
+  if (messageSize > MAX_MESSAGE_SIZE - 1) {
     LOG_PRINTLN(F("Received message is too large to process"));
     // Skip the message
     while (mqttClient.available()) {
@@ -43,16 +47,15 @@ void onMqttMessageReceived(int messageSize) {
     return;
   }
 
-  // Create a buffer for the message
-  char message[messageSize + 1];
-  int i = 0;
-
   // Read the message
   while (mqttClient.available() && i < messageSize) {
     message[i++] = (char)mqttClient.read();
   }
   message[i] = '\0';  // Null terminate
 
+  LOG_PRINT(F("Helmet received command \""));
+  LOG_PRINT(message);
+  LOG_PRINTLN(F("\". Processing..."));
   // Forward to the common command processor
   processCommandJson(message, messageSize);
 }

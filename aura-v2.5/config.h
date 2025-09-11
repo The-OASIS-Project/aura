@@ -128,7 +128,7 @@
 // Define servo angle limits
 #define OPEN_ANGLE_DEFAULT 0
 #define CLOSED_ANGLE_DEFAULT 77
-#define OPEN_STRUGGLE_BACKOFF 1
+#define OPEN_STRUGGLE_BACKOFF 3
 
 // LED configuration
 //#define USE_NEOPIXELS // Uncomment to use NeoPixels instead of regular LEDs

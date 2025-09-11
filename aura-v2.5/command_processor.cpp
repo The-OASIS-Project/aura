@@ -36,6 +36,12 @@ void setupSerialCommands() {
   // Initialize the buffer
   memset(serialBuffer, 0, SERIAL_BUFFER_SIZE);
   serialBufferIndex = 0;
+
+  // Also clear any existing data in the Serial buffer
+  while (Serial.available()) {
+    Serial.read();
+  }
+
   LOG_PRINTLN(F("Serial command processor initialized"));
 }
 
@@ -62,33 +68,33 @@ bool processCommandJson(const char* jsonString, size_t length) {
   }
 
   // Check for faceplate action
-  if (doc.containsKey("action") && strcmp(doc["action"], "faceplate") == 0) {
-    if (doc.containsKey("value")) {
-      // Get the value
-      const char* value = doc["value"];
+  if (doc.containsKey("device") && strcmp(doc["device"], "faceplate") == 0) {
+    if (doc.containsKey("action")) {
+      // Get the action
+      const char* action = doc["action"];
 
       LOG_PRINT(F("Faceplate command received: "));
-      LOG_PRINTLN(value);
+      LOG_PRINTLN(action);
 
-      // Act based on the value
-      if (strcmp(value, "open") == 0) {
+      // Act based on the action
+      if ((strcmp(action, "open") == 0) || (strcmp(action, "enable") == 0)) {
         // Open faceplate command
         LOG_PRINTLN(F("Command: Opening faceplate"));
         openFaceplate();
         return true;
-      } else if (strcmp(value, "close") == 0) {
+      } else if ((strcmp(action, "close") == 0) || (strcmp(action, "disable") == 0)) {
         // Close faceplate command
         LOG_PRINTLN(F("Command: Closing faceplate"));
         closeFaceplate();
         return true;
-      } else if (strcmp(value, "toggle") == 0) {
+      } else if (strcmp(action, "toggle") == 0) {
         // Toggle faceplate command
         LOG_PRINTLN(F("Command: Toggling faceplate"));
         toggleFaceplateState();
         return true;
       } else {
-        LOG_PRINT(F("Unknown faceplate value: "));
-        LOG_PRINTLN(value);
+        LOG_PRINT(F("Unknown faceplate action: "));
+        LOG_PRINTLN(action);
       }
     }
   }
@@ -104,7 +110,7 @@ void checkSerialCommands() {
   while (Serial.available() > 0) {
     // Read a character
     char c = Serial.read();
-    
+
     // Check for newline or maximum buffer size
     if (c == '\n' || c == '\r') {
       // If we have data in the buffer, process it
@@ -112,16 +118,21 @@ void checkSerialCommands() {
         // Null-terminate the string
         serialBuffer[serialBufferIndex] = '\0';
         
-        // Process the command
+        // Process the command - pass ONLY the valid portion
         processCommandJson(serialBuffer, serialBufferIndex);
         
-        // Reset the buffer
+        // Clear the entire buffer explicitly
         memset(serialBuffer, 0, SERIAL_BUFFER_SIZE);
         serialBufferIndex = 0;
       }
     } else if (serialBufferIndex < SERIAL_BUFFER_SIZE - 1) {
       // Add character to buffer if there's space
       serialBuffer[serialBufferIndex++] = c;
+    } else {
+      // Buffer overflow - reset everything
+      LOG_PRINTLN(F("Serial buffer overflow, resetting"));
+      memset(serialBuffer, 0, SERIAL_BUFFER_SIZE);
+      serialBufferIndex = 0;
     }
   }
 }

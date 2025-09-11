@@ -116,6 +116,13 @@ void setup() {
   setupIMU();
   setupGPS();
   setupEnvironmental();
+
+  // Clear any garbage in serial buffer
+  while (Serial.available()) {
+    Serial.read();
+  }
+  delay(100);
+
   setupSerialCommands();
 
   pixels.setPixelColor(0, pixels.Color(255, 0, 0));
