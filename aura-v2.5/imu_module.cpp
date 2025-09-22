@@ -89,7 +89,7 @@ void setupIMU() {
     // Try a lower SPI speed as fallback
     LOG_PRINTLN(F("Attempting with lower SPI speed..."));
     delay(100);
-    if (myIMU.beginSPI(BNO086_CS, BNO086_INT, BNO086_RST, BNO086_SPI_LOW_SPEED, SPI) == false) {
+    if (myIMU.beginSPI(BNO086_CS, BNO086_INT, BNO086_RST, BNO086_SPI_LOW_SPEED, mySPI) == false) {
       LOG_PRINTLN(F("SPI initialization still failed with lower speed"));
     } else {
       LOG_PRINTLN(F("SPI initialized with lower speed successfully!"));
@@ -107,24 +107,52 @@ void setupIMU() {
     }
 
     // Set up calibration for head tracking
-    myIMU.setCalibrationConfig(SH2_CAL_ACCEL);
+    myIMU.setCalibrationConfig(SH2_CAL_ACCEL | SH2_CAL_MAG);
 
     LOG_PRINTLN(F("Enabling rotation vector for tracking..."));
 
-    // Try to enable the optimal rotation vector type
+    // Enable dual rotation vectors: one for smooth motion, one for compass
+    bool motionSensorEnabled = false;
+    bool compassSensorEnabled = false;
+
+    /*
+    * Motion Sensor Priority Explanation:
+    *
+    * 1. enableGyroIntegratedRotationVector() - PREFERRED for head tracking
+    *    - Lowest latency, most responsive (designed for VR headsets)
+    *    - Optimized processing path, can run up to 1kHz
+    *    - May fail on: older firmware, resource constraints, hardware variants
+    *
+    * 2. enableARVRStabilizedRotationVector() - FALLBACK for VR applications
+    *    - VR-optimized with jump prevention/stabilization
+    *    - Higher latency but still suitable for head tracking
+    *    - More widely supported across BNO08x variants
+    *    - Better compatibility when running dual sensors
+    *
+    * Both exclude/minimize magnetometer influence to prevent VR motion artifacts
+    * while maintaining smooth, responsive motion tracking for display purposes.
+    */
+
+    // 1. Enable optimal motion sensor (excludes/minimizes magnetometer)
     if (myIMU.enableGyroIntegratedRotationVector(IMU_TIME_BETWEEN_REPORTS) == true) {
-      LOG_PRINTLN(F("Gyro Integrated Rotation Vector enabled"));
+      LOG_PRINTLN(F("Gyro Integrated Rotation Vector enabled for motion"));
+      motionSensorEnabled = true;
+    } else if (myIMU.enableARVRStabilizedRotationVector(IMU_TIME_BETWEEN_REPORTS) == true) {
+      LOG_PRINTLN(F("AR/VR Stabilized Rotation Vector enabled for motion"));
+      motionSensorEnabled = true;
+    }
+
+    // 2. ALSO enable standard rotation vector for compass (includes magnetometer)
+    if (myIMU.enableRotationVector(IMU_TIME_BETWEEN_REPORTS) == true) {
+      LOG_PRINTLN(F("Standard Rotation Vector enabled for compass"));
+      compassSensorEnabled = true;
     } else {
-      // Fall back to standard options if needed
-      if (myIMU.enableARVRStabilizedRotationVector(IMU_TIME_BETWEEN_REPORTS) == true) {
-        LOG_PRINTLN(F("AR/VR Stabilized Rotation Vector enabled"));
-      } else {
-        if (myIMU.enableRotationVector(IMU_TIME_BETWEEN_REPORTS) == true) {
-          LOG_PRINTLN(F("Standard Rotation Vector enabled"));
-        } else {
-          LOG_PRINTLN(F("Could not enable any rotation vector"));
-        }
-      }
+      LOG_PRINTLN(F("Warning: Compass sensor failed to enable"));
+    }
+
+    // Check if we have at least one sensor working
+    if (!motionSensorEnabled && !compassSensorEnabled) {
+      LOG_PRINTLN(F("Could not enable any rotation vector sensors"));
     }
   }
 }
@@ -150,20 +178,60 @@ void attemptIMUReinitialization() {
   // Ensure CS is HIGH (deselected)
   digitalWrite(BNO086_CS, HIGH);
 
-  // Reset sequence
+  // Try wake strategy following datasheet Figure 1-22
+  LOG_PRINTLN(F("Attempting wake sequence"));
+
+  // Step 1: Drive PS0/WAKE low to initiate wake
+  digitalWrite(BNO086_WAKE, LOW);
+
+  // Step 2: Wait for BNO086 to assert H_INTN (goes low)
+  unsigned long wakeStart = millis();
+  while (digitalRead(BNO086_INT) == HIGH) {
+    if (millis() - wakeStart > 50) {  // 50ms timeout for interrupt response
+      LOG_PRINTLN(F("Wake timeout - no interrupt response"));
+      digitalWrite(BNO086_WAKE, HIGH);  // Release wake
+      break;
+    }
+    delay(1);
+  }
+
+  // Step 3: If interrupt was asserted, release wake and allow normal SPI communication
+  if (digitalRead(BNO086_INT) == LOW) {
+    digitalWrite(BNO086_WAKE, HIGH);  // Release wake signal
+    LOG_PRINTLN(F("Wake handshake successful"));
+    // Note: H_INTN will be deasserted automatically when we start SPI communication
+  } else {
+    LOG_PRINTLN(F("Wake handshake failed"));
+  }
+
+  // Enhanced reset sequence
+  LOG_PRINTLN(F("Performing enhanced hard reset"));
+
+  // Ensure clean state before reset
+  digitalWrite(BNO086_CS, HIGH);    // Deselect
+  digitalWrite(BNO086_WAKE, HIGH);  // Ensure wake is released
+
+  // Extended reset sequence
   digitalWrite(BNO086_RST, LOW);
-  delay(RESET_HOLD);  // Hold in reset for 10ms
+  delay(RESET_HOLD * 2);  // Extended reset hold (30ms)
   digitalWrite(BNO086_RST, HIGH);
-  delay(RESET_WAIT);  // Wait for BNO086 to initialize
+
+  // Wait for reset completion and clear any pending interrupts
+  delay(RESET_WAIT);
+
+  // Clear any stale SPI state
+  mySPI.end();
+  delay(10);
+  mySPI.begin(BNO086_SCK, BNO086_MISO, BNO086_MOSI, BNO086_CS);
 
   // Try to reinitialize with SPI
-  if (myIMU.beginSPI(BNO086_CS, BNO086_INT, BNO086_RST, BNO086_SPI_HIGH_SPEED, SPI) == false) {
+  if (myIMU.beginSPI(BNO086_CS, BNO086_INT, BNO086_RST, BNO086_SPI_HIGH_SPEED, mySPI) == false) {
     LOG_PRINTLN(F("IMU SPI reinitialization failed"));
 
     // Try with a lower SPI speed
     LOG_PRINTLN(F("Attempting reinitialization with lower SPI speed..."));
     delay(100);
-    if (myIMU.beginSPI(BNO086_CS, BNO086_INT, BNO086_RST, BNO086_SPI_LOW_SPEED, SPI) == false) {
+    if (myIMU.beginSPI(BNO086_CS, BNO086_INT, BNO086_RST, BNO086_SPI_LOW_SPEED, mySPI) == false) {
       LOG_PRINTLN(F("IMU reinitialization failed with lower speed as well"));
       return;
     } else {
@@ -172,14 +240,28 @@ void attemptIMUReinitialization() {
   }
 
   // Re-setup optimal calibration
-  myIMU.setCalibrationConfig(SH2_CAL_ACCEL);
+  myIMU.setCalibrationConfig(SH2_CAL_ACCEL | SH2_CAL_MAG);
 
-  // Re-enable the optimal rotation vector
-  if (!myIMU.enableGyroIntegratedRotationVector(IMU_TIME_BETWEEN_REPORTS)) {
-    if (!myIMU.enableARVRStabilizedRotationVector(IMU_TIME_BETWEEN_REPORTS)) {
-      myIMU.enableRotationVector(IMU_TIME_BETWEEN_REPORTS);
-    }
+  // Re-enable both rotation vectors
+  bool motionOk = false;
+  bool compassOk = false;
+
+  // Motion sensor
+  if (myIMU.enableGyroIntegratedRotationVector(IMU_TIME_BETWEEN_REPORTS)) {
+    motionOk = true;
+  } else if (myIMU.enableARVRStabilizedRotationVector(IMU_TIME_BETWEEN_REPORTS)) {
+    motionOk = true;
   }
+
+  // Compass sensor
+  if (myIMU.enableRotationVector(IMU_TIME_BETWEEN_REPORTS)) {
+    compassOk = true;
+  }
+
+  LOG_PRINT(F("Reinitialization: Motion="));
+  LOG_PRINT(motionOk ? "OK" : "FAIL");
+  LOG_PRINT(F(", Compass="));
+  LOG_PRINTLN(compassOk ? "OK" : "FAIL");
 
   if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
     display_data.imu_available = true;
@@ -234,12 +316,13 @@ void imuTask(void* pvParameters) {
 
       if (myIMU.wasReset()) {
         LOG_PRINTLN(F("BNO086 was reset during timeout - re-enabling features"));
-        // Reset was detected - re-enable rotation vector
+        // Reset was detected - re-enable both rotation vectors
         if (!myIMU.enableGyroIntegratedRotationVector(IMU_TIME_BETWEEN_REPORTS)) {
-          if (!myIMU.enableARVRStabilizedRotationVector(IMU_TIME_BETWEEN_REPORTS)) {
-            myIMU.enableRotationVector(IMU_TIME_BETWEEN_REPORTS);
-          }
+          myIMU.enableARVRStabilizedRotationVector(IMU_TIME_BETWEEN_REPORTS);
         }
+        // Also re-enable compass
+        myIMU.enableRotationVector(IMU_TIME_BETWEEN_REPORTS);
+
         resetAttempts = 0;           // Clear attempt counter
         lastDataTime = currentTime;  // Reset timeout
       } else {
@@ -248,20 +331,54 @@ void imuTask(void* pvParameters) {
         LOG_PRINTLN(String(resetAttempts));
 
         if (resetAttempts <= MAX_RESET_ATTEMPTS) {
-          // Try wake strategy first
-          // In SPI mode, pulsing WAKE/PS0 can help wake the device
-          digitalWrite(BNO086_CS, HIGH);  // Ensure CS is HIGH (deselected)
+          // Try wake strategy following datasheet Figure 1-22
+          LOG_PRINTLN(F("Attempting wake sequence"));
+
+          // Ensure CS is HIGH (deselected)
+          digitalWrite(BNO086_CS, HIGH);
+
+          // Step 1: Drive PS0/WAKE low to initiate wake
           digitalWrite(BNO086_WAKE, LOW);
-          delayMicroseconds(50);  // Short pulse
-          digitalWrite(BNO086_WAKE, HIGH);
-          delay(1);  // Give it a moment
+
+          // Step 2: Wait for BNO086 to assert H_INTN (goes low)
+          unsigned long wakeStart = millis();
+          while (digitalRead(BNO086_INT) == HIGH) {
+            if (millis() - wakeStart > 50) {  // 50ms timeout for interrupt response
+              LOG_PRINTLN(F("Wake timeout - no interrupt response"));
+              digitalWrite(BNO086_WAKE, HIGH);  // Release wake
+              break;
+            }
+            delay(1);
+          }
+
+          // Step 3: If interrupt was asserted, release wake and allow normal SPI communication
+          if (digitalRead(BNO086_INT) == LOW) {
+            digitalWrite(BNO086_WAKE, HIGH);  // Release wake signal
+            LOG_PRINTLN(F("Wake handshake successful"));
+            // Note: H_INTN will be deasserted automatically when we start SPI communication
+          } else {
+            LOG_PRINTLN(F("Wake handshake failed"));
+          }
         } else {
           // If multiple wake attempts failed, try a hard reset
-          LOG_PRINTLN(F("Wake attempts failed, performing hard reset"));
+          LOG_PRINTLN(F("Wake attempts failed, performing enhanced hard reset"));
+
+          // Ensure clean state before reset
+          digitalWrite(BNO086_CS, HIGH);    // Deselect
+          digitalWrite(BNO086_WAKE, HIGH);  // Ensure wake is released
+
+          // Extended reset sequence
           digitalWrite(BNO086_RST, LOW);
-          delay(RESET_HOLD);  // Hold in reset for 10ms
+          delay(RESET_HOLD * 2);  // Extended reset hold (30ms)
           digitalWrite(BNO086_RST, HIGH);
-          delay(RESET_WAIT);  // Wait for BNO086 to come out of reset
+
+          // Wait for reset completion and clear any pending interrupts
+          delay(RESET_WAIT);
+
+          // Clear any stale SPI state
+          mySPI.end();
+          delay(10);
+          mySPI.begin(BNO086_SCK, BNO086_MISO, BNO086_MOSI, BNO086_CS);
 
           // Set flag to trigger reinitialization
           if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -279,7 +396,7 @@ void imuTask(void* pvParameters) {
       LOG_PRINTLN(F("BNO08x was reset - performing initialization sequence"));
 
       // Set the calibration config first to ensure sensors are properly calibrated
-      myIMU.setCalibrationConfig(SH2_CAL_ACCEL);
+      myIMU.setCalibrationConfig(SH2_CAL_ACCEL | SH2_CAL_MAG);
 
       // Wait a bit for the sensor to apply calibration settings
       delay(50);
@@ -287,17 +404,26 @@ void imuTask(void* pvParameters) {
       // Now try to enable sensors in priority order
       bool sensorEnabled = false;
 
-      // Try in priority order with proper error checking
+      // Re-enable both sensor types after reset
+      bool motionReEnabled = false;
+      bool compassReEnabled = false;
+
+      // Re-enable motion sensor
       if (myIMU.enableGyroIntegratedRotationVector(IMU_TIME_BETWEEN_REPORTS)) {
         LOG_PRINTLN(F("Re-enabled Gyro Integrated Rotation Vector"));
-        sensorEnabled = true;
+        motionReEnabled = true;
       } else if (myIMU.enableARVRStabilizedRotationVector(IMU_TIME_BETWEEN_REPORTS)) {
         LOG_PRINTLN(F("Re-enabled AR/VR Stabilized Rotation Vector"));
-        sensorEnabled = true;
-      } else if (myIMU.enableRotationVector(IMU_TIME_BETWEEN_REPORTS)) {
-        LOG_PRINTLN(F("Re-enabled Standard Rotation Vector"));
-        sensorEnabled = true;
+        motionReEnabled = true;
       }
+
+      // Re-enable compass sensor
+      if (myIMU.enableRotationVector(IMU_TIME_BETWEEN_REPORTS)) {
+        LOG_PRINTLN(F("Re-enabled Standard Rotation Vector for compass"));
+        compassReEnabled = true;
+      }
+
+      sensorEnabled = motionReEnabled || compassReEnabled;
 
       if (!sensorEnabled) {
         LOG_PRINTLN(F("Failed to enable any rotation vector sensors after reset"));
@@ -316,21 +442,24 @@ void imuTask(void* pvParameters) {
       }
     }
 
+    static bool compassDataReceived = false;
+
     // Check if we have a new sensor event
     if (myIMU.getSensorEvent() == true) {
       // Update the data timeout timer
       lastDataTime = currentTime;
 
-      // Make sure it's one of our desired sensor types
+      // Process different sensor types separately
       uint8_t sensorId = myIMU.getSensorEventID();
-      if (sensorId == SENSOR_REPORTID_ROTATION_VECTOR || sensorId == SENSOR_REPORTID_GYRO_INTEGRATED_ROTATION_VECTOR || sensorId == SENSOR_REPORTID_AR_VR_STABILIZED_ROTATION_VECTOR) {
 
-        // Get orientation data - all rotation vector types use the same methods
+      if (sensorId == SENSOR_REPORTID_GYRO_INTEGRATED_ROTATION_VECTOR || 
+          sensorId == SENSOR_REPORTID_AR_VR_STABILIZED_ROTATION_VECTOR) {
+        // Motion sensor data - smooth but may drift from north
         roll = (myIMU.getRoll()) * 180.0 / PI;    // Convert roll to degrees
         pitch = (myIMU.getPitch()) * 180.0 / PI;  // Convert pitch to degrees
-        heading = (myIMU.getYaw()) * 180.0 / PI;  // Convert yaw / heading to degrees
+        heading = (myIMU.getYaw()) * 180.0 / PI;  // Motion heading (fallback)
 
-        // Check for stuck default values
+        // Check for stuck default values (keep existing logic)
         if (heading == 90.0f && pitch == 0.0f && roll == 90.0f) {
           stuckValueCount++;
           if (stuckValueCount > 5) {
@@ -355,30 +484,38 @@ void imuTask(void* pvParameters) {
           stuckValueCount = 0;
         }
 
-        // Only process data if it's not stuck in default values or values have changed
+        // Only process motion data if it's not stuck and values have changed
         if (stuckValueCount < 5 && (heading != prevHeading || pitch != prevPitch || roll != prevRoll)) {
-          // Prepare JSON data
-          doc["device"] = "Motion";
-          doc["format"] = "Orientation";
-          doc["heading"] = heading;
-          doc["pitch"] = -1.0f * pitch;  // Keep consistent with original sign convention
-          doc["roll"] = roll;
 
-          // Update display data
+          // Determine which heading to use - prioritize compass if available
+          float outputHeading = heading;  // Default to motion heading
+
           if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            // Use compass heading if we've received compass data
+            if (compassDataReceived) {
+              outputHeading = display_data.compass_heading;
+            }
+
+            // Update display data with motion values but preferred heading
             display_data.roll = roll;
             display_data.pitch = pitch;
-            display_data.heading = heading;
-
+            display_data.heading = outputHeading;  // Compass preferred, motion fallback
             xSemaphoreGive(displayMutex);
           }
 
+          // Prepare JSON data with preferred heading
+          doc["device"] = "Motion";
+          doc["format"] = "Orientation";
+          doc["heading"] = outputHeading;  // Compass heading if available
+          doc["pitch"] = -1.0f * pitch;  // Keep consistent with original sign convention
+          doc["roll"] = roll;
+
           // Send JSON data
-#ifdef ENABLE_MQTT
+    #ifdef ENABLE_MQTT
           logger_send_mqtt_json(&doc, "Motion", &mqttClient, topic);
-#else
+    #else
           logger_send_json(&doc, "Motion");
-#endif
+    #endif
 
           doc.clear();
 
@@ -387,7 +524,30 @@ void imuTask(void* pvParameters) {
           prevPitch = pitch;
           prevRoll = roll;
         }
+
+      } else if (sensorId == SENSOR_REPORTID_ROTATION_VECTOR) {
+        // Compass sensor data - true north reference
+        float compassHeading = (myIMU.getYaw()) * 180.0 / PI;
+
+        // Update display data with compass heading (this will be used by motion sensor above)
+        if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+          display_data.compass_heading = compassHeading;
+          xSemaphoreGive(displayMutex);
+        }
+
+        // Mark that we've received compass data
+        compassDataReceived = true;
       }
+    }
+
+    static unsigned long lastIntCheck = 0;
+    if (millis() - lastIntCheck > 5000) {  // Check every 5 seconds
+      if (digitalRead(BNO086_INT) == LOW) {
+        // INT has been asserted for extended period - potential lockup
+        LOG_PRINTLN(F("Extended interrupt assertion detected"));
+        // This could trigger more aggressive recovery
+      }
+      lastIntCheck = millis();
     }
 
     vTaskDelay(pdMS_TO_TICKS(10));  // Short delay to allow other tasks to run

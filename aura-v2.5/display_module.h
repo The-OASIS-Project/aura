@@ -71,6 +71,7 @@ typedef struct {
   float roll;
   float pitch;
   float heading;
+  float compass_heading;
   bool imu_available;
 
   // GPS data
