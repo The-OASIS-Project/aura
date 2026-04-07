@@ -26,6 +26,38 @@
 #define SECRET_PASS "IronMan123"
 
 /*
+ * MQTT credentials and broker configuration.
+ * Leave SECRET_MQTT_USERNAME empty ("") to connect without authentication.
+ * Set SECRET_MQTT_BROKER to "" to auto-discover via WiFi gateway IP.
+ *
+ * For full MQTT security setup (broker, certs, all OASIS components), see:
+ * https://github.com/The-OASIS-Project/dawn/blob/main/docs/MQTT_SETUP.md
+ */
+#define SECRET_MQTT_BROKER ""
+#define SECRET_MQTT_USERNAME ""
+#define SECRET_MQTT_PASSWORD ""
+
+/*
+ * MQTT TLS CA certificate (PEM format).
+ * Paste the contents of your CA certificate here to enable TLS.
+ * Leave empty ("") to connect without TLS.
+ *
+ * To get the certificate content:
+ *   cat /etc/mosquitto/certs/ca.crt
+ *
+ * Then paste it between the quotes below, with \n at the end of each line.
+ */
+#define SECRET_MQTT_CA_CERT ""
+
+/* Example with a real certificate:
+#define SECRET_MQTT_CA_CERT \
+  "-----BEGIN CERTIFICATE-----\n" \
+  "MIIDazCCAlOgAwIBAgIUYDO...\n" \
+  "...\n" \
+  "-----END CERTIFICATE-----\n"
+*/
+
+/*
  * SECURITY WARNING: Change the PMK to your own unique value!
  * Using the default key makes your ESP-Now communication vulnerable.
  * Generate a random 16-byte key for production use.

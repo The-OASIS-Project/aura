@@ -41,6 +41,8 @@
 // MQTT settings (when ENABLE_MQTT is defined)
 #define MQTT_PORT 1883
 #define MQTT_TOPIC "helmet"
+// Enable TLS for MQTT (requires SECRET_MQTT_CA_CERT in arduino_secrets.h)
+//#define MQTT_USE_TLS
 
 // Socket settings (when ENABLE_SOCKET is defined)
 #define SERVER_PORT 3000

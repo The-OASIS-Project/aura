@@ -26,11 +26,17 @@
 #include "logger.h"
 #include "display_module.h"
 #include "faceplate_module.h"  // Added for faceplate control
+#include "arduino_secrets.h"
 
 #ifdef ENABLE_MQTT
 // MQTT configuration
+#if defined(MQTT_USE_TLS)
+WiFiClientSecure mqttWifiClient;
+MqttClient mqttClient(mqttWifiClient);
+#else
 extern WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
+#endif
 String brokerString;
 const char* broker = NULL;
 int port = MQTT_PORT;
@@ -89,23 +95,56 @@ void setupNetworking(const char* ssid, const char* pass, int retry_attempts, WiF
 void setupMQTT(WiFiClient* wifiClient, Adafruit_NeoPixel* pixels) {
   mqttClient.setId("helmet");
 
-  // You can provide a username and password for authentication
-  // mqttClient.setUsernamePassword("username", "password");
-
-  brokerString = WiFi.gatewayIP().toString();
+  /* Determine broker address: use configured broker or fall back to gateway IP */
+  const char* configured_broker = SECRET_MQTT_BROKER;
+  if (configured_broker[0] != '\0') {
+    brokerString = String(configured_broker);
+  } else {
+    brokerString = WiFi.gatewayIP().toString();
+  }
   broker = brokerString.c_str();
 
-  LOG_PRINT("Attempting to connect to the MQTT broker: ");
-  LOG_PRINTLN(broker);
+  /* Configure authentication if credentials are provided */
+  const char* mqtt_user = SECRET_MQTT_USERNAME;
+  const char* mqtt_pass = SECRET_MQTT_PASSWORD;
+  if (mqtt_user[0] != '\0') {
+    mqttClient.setUsernamePassword(mqtt_user, mqtt_pass);
+    LOG_PRINT(F("MQTT: Authentication configured for user: "));
+    LOG_PRINTLN(mqtt_user);
+  } else {
+    LOG_PRINTLN(F("MQTT: No authentication configured"));
+  }
+
+#if defined(MQTT_USE_TLS)
+  /* Configure TLS with CA certificate */
+  const char* ca_cert = SECRET_MQTT_CA_CERT;
+  if (ca_cert[0] != '\0') {
+    mqttWifiClient.setCACert(ca_cert);
+    LOG_PRINTLN(F("MQTT: TLS enabled with CA certificate"));
+  } else {
+    /* No CA cert -- accept any server cert (insecure, for testing only) */
+    mqttWifiClient.setInsecure();
+    LOG_PRINTLN(F("MQTT: TLS enabled WITHOUT certificate verification (insecure)"));
+  }
+  /* Use TLS port if still on default */
+  if (port == 1883) {
+    port = 8883;
+    LOG_PRINTLN(F("MQTT: Auto-switched to TLS port 8883"));
+  }
+#endif
+
+  LOG_PRINT(F("MQTT: Connecting to broker at "));
+  LOG_PRINT(broker);
+  LOG_PRINT(F(":"));
+  LOG_PRINTLN(String(port));
 
   if (!mqttClient.connect(broker, port)) {
-    LOG_PRINT("MQTT connection failed! Error code = ");
+    LOG_PRINT(F("MQTT: Connection failed! Error code = "));
     LOG_PRINTLN(String(mqttClient.connectError()));
     return;
   }
 
-  LOG_PRINTLN("You're connected to the MQTT broker!");
-  LOG_PRINTLN("");
+  LOG_PRINTLN(F("MQTT: Connected to broker"));
 
   pixels->setPixelColor(0, pixels->Color(0, 0, 255));  // Blue on MQTT success
   pixels->show();
@@ -116,16 +155,11 @@ void setupMQTT(WiFiClient* wifiClient, Adafruit_NeoPixel* pixels) {
   // Set the callback for incoming messages
   mqttClient.onMessage(onMqttMessageReceived);
 
-  LOG_PRINT("Subscribing to topic: ");
+  LOG_PRINT(F("MQTT: Subscribing to topic: "));
   LOG_PRINTLN(topic);
-  LOG_PRINTLN("");
 
   // Subscribe to the helmet topic for receiving commands
   mqttClient.subscribe(topic);
-
-  LOG_PRINT("Waiting for messages on topic: ");
-  LOG_PRINTLN(topic);
-  LOG_PRINTLN("");
 }
 #endif
 

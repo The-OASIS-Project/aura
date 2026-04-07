@@ -35,6 +35,11 @@
 #ifdef ENABLE_MQTT
 #include <ArduinoMqttClient.h>
 
+#if defined(MQTT_USE_TLS)
+#include <WiFiClientSecure.h>
+extern WiFiClientSecure mqttWifiClient;
+#endif
+
 // Declare the global MQTT client
 extern MqttClient mqttClient;
 extern const char topic[];
