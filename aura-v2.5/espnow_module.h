@@ -65,6 +65,9 @@ typedef struct {
   uint8_t data[200];                 // Data payload (JSON or other)
 } espnow_message_t;
 
+// Header size (everything except the data[] payload)
+#define ESPNOW_HEADER_SIZE offsetof(espnow_message_t, data)
+
 // ESP-Now peer information
 typedef struct {
   uint8_t mac[6];                    // Peer MAC address

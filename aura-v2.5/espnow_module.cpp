@@ -52,13 +52,14 @@ void onESPNowDataRecv(const esp_now_recv_info* info, const uint8_t* data, int le
   // Extract the sender's MAC address from the info structure
   const uint8_t* mac = info->src_addr;
 
-  if (len < sizeof(espnow_message_t)) {
+  if (len < (int)ESPNOW_HEADER_SIZE) {
     //LOG_PRINTLN(F("ESP-Now: Received malformed data (too short)"));
     return;
   }
 
   espnow_message_t msg;
-  memcpy(&msg, data, sizeof(espnow_message_t));
+  memset(&msg, 0, sizeof(msg));
+  memcpy(&msg, data, min((size_t)len, sizeof(msg)));
 
   // Verify the message MAC matches the sender MAC
   if (memcmp(msg.mac, mac, 6) != 0) {
@@ -171,8 +172,13 @@ void onESPNowDataRecv(const esp_now_recv_info* info, const uint8_t* data, int le
 
           // Process the JSON data if present
           if (msg.data_len > 0) {
+            // Clamp data_len to prevent buffer overflow from malformed messages
+            if (msg.data_len > sizeof(msg.data)) {
+              msg.data_len = sizeof(msg.data);
+            }
+
             // Ensure null termination
-            uint8_t json_data[201];
+            uint8_t json_data[sizeof(msg.data) + 1];
             memcpy(json_data, msg.data, msg.data_len);
             json_data[msg.data_len] = '\0';
 
