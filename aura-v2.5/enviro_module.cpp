@@ -333,14 +333,23 @@ void enviroTask(void* pvParameters) {
     else
       doc["air_quality_description"] = "Very Poor";
 
-    // Add heat index calculation (Celsius)
-    if (temperature >= 26.7 && humidity >= 40) {
-      // Convert temperature to Celsius for the formula
-      // Using the Steadman formula adapted for Celsius
-      float heat_index_c = temperature + 0.348 * humidity - 0.09 * temperature * humidity / 100 + 0.02 * temperature * temperature - 0.0312 * temperature * temperature * humidity / 100 + 0.0164 * humidity * humidity / 100 - 0.0022 * temperature * humidity * humidity / 10000 - 0.0047 * temperature * temperature * temperature / 100 + 0.001 * temperature * temperature * humidity * humidity / 10000;
-
-      doc["heat_index_c"] = heat_index_c;
+    // Heat index (apparent temperature), NWS Rothfusz regression in Celsius.
+    // The regression is meaningful when warm; below ~26.7 C the "feels like"
+    // temperature is essentially the air temperature, so emit that instead of
+    // omitting the field (which rendered as N/A downstream). Always emit so a
+    // low-humidity reading no longer drops the field entirely.
+    float heat_index_c;
+    if (temperature >= 26.7) {
+      heat_index_c = -8.78469475556 + 1.61139411 * temperature + 2.33854883889 * humidity -
+                     0.14611605 * temperature * humidity - 0.012308094 * temperature * temperature -
+                     0.0164248277778 * humidity * humidity +
+                     0.002211732 * temperature * temperature * humidity +
+                     0.00072546 * temperature * humidity * humidity -
+                     0.000003582 * temperature * temperature * humidity * humidity;
+    } else {
+      heat_index_c = temperature;
     }
+    doc["heat_index_c"] = heat_index_c;
 
     // Add dew point calculation
     float a = 17.27;
